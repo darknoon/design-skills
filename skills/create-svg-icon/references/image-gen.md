@@ -40,7 +40,7 @@ The best models are as follows:
 
 ### Script usage
 
-Run `scripts/t2i.py` with a prompt. Dependencies are managed automatically by `uv` — no manual install needed. The script will tell you exactly what to set if an API key is missing.
+Run `scripts/t2i.py` with a prompt. Dependencies are managed automatically by `uv` — no manual install, version checks, or pre-flight commands needed. Just run the `uv run` command directly. The script will tell you exactly what to set if an API key is missing.
 
 ```bash
 # OpenAI (default)

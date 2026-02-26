@@ -83,6 +83,59 @@ Z              — close path
 | Search | Circle + diagonal line extending bottom-right |
 | Hamburger menu | Three horizontal lines, evenly spaced |
 
+
+
+### Inline SVG
+
+```html
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="1.5"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <!-- paths here -->
+</svg>
+```
+
+### React Component
+
+```tsx
+export function IconName({
+  size = 24,
+  className,
+}: {
+  size?: number;
+  className?: string;
+}) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.5}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+    >
+      {/* paths here */}
+    </svg>
+  );
+}
+```
+
+### SVG File
+
+Use `assets/icon-template.svg` as the starting point, then fill in paths.
+
 ## Accessibility
 
 - Never rely on color alone to convey meaning
