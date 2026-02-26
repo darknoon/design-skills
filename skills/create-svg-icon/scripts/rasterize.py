@@ -55,7 +55,9 @@ def render_svgs(svg_paths: list[str | Path], size: tuple[int, int] = (512, 512))
         for svg_path in paths:
             page = browser.new_page(viewport={"width": size[0], "height": size[1]})
             page.set_content(
-                f'<!DOCTYPE html><html><body style="margin:0;padding:0;background:white">'
+                f'<!DOCTYPE html><html>'
+                f'<body style="margin:0;padding:0;background:white">'
+                f'<style>svg{{width:{size[0]}px;height:{size[1]}px}}</style>'
                 f'{svg_path.read_text()}</body></html>'
             )
             png = page.locator("svg").first.screenshot()

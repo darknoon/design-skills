@@ -58,6 +58,15 @@ Each entry should include:
 - Links to every image generated (relative paths from the icon folder), so the user can open them directly
 - Your assessment of what worked and what didn't
 - What you plan to do next
+- **Cost of each API call** (append immediately after each call using the rates in `references/image-gen.md` and `references/vectorization.md`)
+
+Maintain a running `## Cost` section at the bottom of the file, updated after each billable call. Report the total to the user when the skill completes.
+
+**Cost rates** (for quick reference):
+- `t2i.py` with `gpt-image-1-mini`: $0.005 (low) / $0.011 (med) / $0.036 (high) per image
+- `t2i.py` with `gpt-image-1`: $0.011 (low) / $0.042 (med) / $0.167 (high) per image
+- `t2i.py` with Gemini models: ~$0.039 per image
+- `vectorize.py`: $0.30 per call (1 credit)
 
 Example:
 
@@ -66,23 +75,54 @@ Example:
 
 User has requested an icon of a man walking a dog in sf symbols style.
 
-SF symbols icons:
+## Concepts
 
-## Concept 1 — man-left-dog-right
+### Concept 1 — man-left-dog-right
 
-Model: gpt-image-1 [prompt](concepts/01-man-left-dog-right/prompt.md)
+Model: gpt-image-1-mini (low) — prompt: "man walking dog, sf symbols style, outline"
 
-![concept](concepts/01-man-left-dog-right/01-gpt-image-1.png)
+![concept 1](concepts/01-man-left-dog-right/concept.png)
 
-Assessment: Good silhouette but dog reads as a cat. Leash is clear. Will try a more specific dog breed.
+### Concept 2 — dog-dominant
+
+Model: gpt-image-1-mini (low) — prompt: "small dog pulling leash, owner cropped, sf symbols"
+
+![concept 2](concepts/02-dog-dominant/concept.png)
+
+### Concept 3 — overhead-leash
+
+Model: gpt-image-1-mini (low) — prompt: "top-down view of leash connecting shoes and paw prints, sf symbols"
+
+![concept 3](concepts/03-overhead-leash/concept.png)
+
+### Selection
+
+→ Concept 1 selected. Best silhouette readability, leash is clear. Dog reads slightly as a cat — will refine in iteration.
 
 ## Iteration 1
 
-Vectorized concept 1 with --auto-crop. Clean output but lost the leash detail.
+Vectorized concept 1 with --auto-crop. Clean output but lost leash detail in vectorization.
 
-![iteration](iteration-01/icon.png)
+![iteration 1](iteration-01/icon.png)
 
-Next: Try vectorizing without auto-crop and manually trim the viewBox.
+Next: Try without --auto-crop and manually trim the viewBox.
+
+## Iteration 2
+
+Re-vectorized without auto-crop. Leash detail preserved. Viewbox trimmed manually.
+
+![iteration 2](iteration-02/icon.png)
+
+→ Approved. Moving to final.
+
+## Cost
+
+| Step | Model | Quality | Count | Cost |
+|------|-------|---------|-------|------|
+| Concept generation | gpt-image-1-mini | low | 3 | $0.015 |
+| Iteration re-generation | gpt-image-1-mini | low | 1 | $0.005 |
+| Vectorization | Quiver | — | 2 | $0.600 |
+| **Total** | | | | **$0.620** |
 ```
 
 **1. Gain context about the current project and icon needs**

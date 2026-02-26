@@ -31,12 +31,17 @@ How strokes are used
 If you need exact pixel dimensions instead, pass `--size WxH` explicitly (e.g. `--size 1024x1024`). Do not rely on the default — always specify one or the other for Gemini.
 
 ### Model selection
-The best models are as follows:
 
-1. `gpt-image-1`: Best for general icon generation and Apple/iOS style icons
-2. `gemini-2.5-flash-image`: Good for all icons, best at Android-style icons
-3. `gpt-image-1.5`: Ok, weaker at icons than `gpt-image-1`
-4. `gemini-3.1-flash-image-preview`: Ok at icons, needs more description of style (filled vs stroke)
+| Model | Best for | Cost (1024×1024) |
+|-------|----------|-----------------|
+| `gpt-image-1-mini` | Fast iteration, low quality | $0.005 (low) / $0.011 (med) / $0.036 (high) |
+| `gpt-image-1` | Final quality, Apple/iOS style | $0.011 (low) / $0.042 (med) / $0.167 (high) |
+| `gemini-2.5-flash-image` | All icons, best Android style | ~$0.039 per image |
+| `gemini-3.1-flash-image-preview` | All icons, needs explicit style | ~$0.039 per image |
+
+Current as of early 2026. OpenAI pricing: [openai.com/api/pricing](https://openai.com/api/pricing). Gemini pricing: [ai.google.dev/gemini-api/docs/pricing](https://ai.google.dev/gemini-api/docs/pricing).
+
+The script uses `quality: low` by default for OpenAI to keep costs down during iteration. Bump to `medium` or `high` for final output.
 
 ### Script usage
 

@@ -2,6 +2,10 @@
 
 [QuiverAI](https://quiver.ai) converts raster images (PNG, JPEG, WebP) into clean SVG output via a dedicated vectorization API. Use this after generating an icon image with `t2i.py` to get an SVG.
 
+## Pricing
+
+**$0.30 per credit** (prepaid, 1–1,000 credits at a time). One successful API request = 1 credit, regardless of `n`. Buy credits at [app.quiver.ai/settings/api-keys](https://app.quiver.ai/settings/api-keys).
+
 ## API key
 
 Set `QUIVER_API_KEY` in your environment:

@@ -28,7 +28,11 @@ Usage:
     uv run get-icon.py search lucide globe --count 3
     uv run get-icon.py search lucide,heroicons,tabler globe --count 3
 
-Sets: lucide, heroicons, tabler, feather, phosphor, radix
+Sets (single style): lucide, feather, radix
+Sets with style variants (use `styles` subcommand to list):
+  heroicons, heroicons-24-solid, heroicons-20-solid, heroicons-16-solid
+  tabler, tabler-filled
+  phosphor, phosphor-thin, phosphor-light, phosphor-bold, phosphor-fill, phosphor-duotone
 """
 
 import argparse
@@ -44,12 +48,28 @@ SETS: dict[str, dict] = {
         "owner": "lucide-icons", "repo": "lucide", "branch": "main", "path": "icons",
     },
     "heroicons": {
-        "raw": "https://raw.githubusercontent.com/tailwindlabs/heroicons/master/src/24/outline/{name}.svg",
-        "owner": "tailwindlabs", "repo": "heroicons", "branch": "master", "path": "src/24/outline",
+        "raw": "https://raw.githubusercontent.com/tailwindlabs/heroicons/master/optimized/24/outline/{name}.svg",
+        "owner": "tailwindlabs", "repo": "heroicons", "branch": "master", "path": "optimized/24/outline",
+    },
+    "heroicons-24-solid": {
+        "raw": "https://raw.githubusercontent.com/tailwindlabs/heroicons/master/optimized/24/solid/{name}.svg",
+        "owner": "tailwindlabs", "repo": "heroicons", "branch": "master", "path": "optimized/24/solid",
+    },
+    "heroicons-20-solid": {
+        "raw": "https://raw.githubusercontent.com/tailwindlabs/heroicons/master/optimized/20/solid/{name}.svg",
+        "owner": "tailwindlabs", "repo": "heroicons", "branch": "master", "path": "optimized/20/solid",
+    },
+    "heroicons-16-solid": {
+        "raw": "https://raw.githubusercontent.com/tailwindlabs/heroicons/master/optimized/16/solid/{name}.svg",
+        "owner": "tailwindlabs", "repo": "heroicons", "branch": "master", "path": "optimized/16/solid",
     },
     "tabler": {
         "raw": "https://raw.githubusercontent.com/tabler/tabler-icons/master/icons/outline/{name}.svg",
         "owner": "tabler", "repo": "tabler-icons", "branch": "master", "path": "icons/outline",
+    },
+    "tabler-filled": {
+        "raw": "https://raw.githubusercontent.com/tabler/tabler-icons/master/icons/filled/{name}.svg",
+        "owner": "tabler", "repo": "tabler-icons", "branch": "master", "path": "icons/filled",
     },
     "feather": {
         "raw": "https://raw.githubusercontent.com/feathericons/feather/master/icons/{name}.svg",
@@ -59,6 +79,26 @@ SETS: dict[str, dict] = {
         "raw": "https://raw.githubusercontent.com/phosphor-icons/core/main/assets/regular/{name}.svg",
         "owner": "phosphor-icons", "repo": "core", "branch": "main", "path": "assets/regular",
     },
+    "phosphor-thin": {
+        "raw": "https://raw.githubusercontent.com/phosphor-icons/core/main/assets/thin/{name}-thin.svg",
+        "owner": "phosphor-icons", "repo": "core", "branch": "main", "path": "assets/thin",
+    },
+    "phosphor-light": {
+        "raw": "https://raw.githubusercontent.com/phosphor-icons/core/main/assets/light/{name}-light.svg",
+        "owner": "phosphor-icons", "repo": "core", "branch": "main", "path": "assets/light",
+    },
+    "phosphor-bold": {
+        "raw": "https://raw.githubusercontent.com/phosphor-icons/core/main/assets/bold/{name}-bold.svg",
+        "owner": "phosphor-icons", "repo": "core", "branch": "main", "path": "assets/bold",
+    },
+    "phosphor-fill": {
+        "raw": "https://raw.githubusercontent.com/phosphor-icons/core/main/assets/fill/{name}-fill.svg",
+        "owner": "phosphor-icons", "repo": "core", "branch": "main", "path": "assets/fill",
+    },
+    "phosphor-duotone": {
+        "raw": "https://raw.githubusercontent.com/phosphor-icons/core/main/assets/duotone/{name}-duotone.svg",
+        "owner": "phosphor-icons", "repo": "core", "branch": "main", "path": "assets/duotone",
+    },
     "radix": {
         "raw": "https://raw.githubusercontent.com/radix-ui/icons/master/packages/radix-icons/icons/{name}.svg",
         "owner": "radix-ui", "repo": "icons", "branch": "master", "path": "packages/radix-icons/icons",
@@ -67,6 +107,37 @@ SETS: dict[str, dict] = {
 
 ALL_SET_NAMES = list(SETS.keys())
 _listing_cache: dict[str, list[str]] = {}
+
+# Style families: maps a base set name to all its style/weight variants.
+# Used by `styles` subcommand and `fetch --all-styles`.
+STYLE_FAMILIES: dict[str, list[str]] = {
+    "heroicons": [
+        "heroicons",           # 24px outline (default)
+        "heroicons-24-solid",  # 24px solid
+        "heroicons-20-solid",  # 20px solid
+        "heroicons-16-solid",  # 16px solid
+    ],
+    "tabler": [
+        "tabler",              # outline (default)
+        "tabler-filled",       # filled/solid
+    ],
+    "phosphor": [
+        "phosphor",            # regular (default)
+        "phosphor-thin",
+        "phosphor-light",
+        "phosphor-bold",
+        "phosphor-fill",
+        "phosphor-duotone",
+    ],
+}
+
+def resolve_family(set_name: str) -> list[str]:
+    """Return all style variants for a set, or just [set_name] if it has no family."""
+    # Check if this name is a base key or a member of a family
+    for base, members in STYLE_FAMILIES.items():
+        if set_name == base or set_name in members:
+            return members
+    return [set_name]
 
 
 def fetch_svg(url: str) -> bytes | None:
@@ -147,10 +218,21 @@ def cmd_list(args: argparse.Namespace) -> None:
             print(name)
 
 
+def cmd_styles(args: argparse.Namespace) -> None:
+    """List all style variants for a set family."""
+    members = resolve_family(args.set)
+    if len(members) == 1:
+        print(f"{args.set} has no style variants.")
+    else:
+        for m in members:
+            print(m)
+
+
 def cmd_fetch(args: argparse.Namespace) -> None:
     output_dir = Path(args.output_dir)
     found = 0
-    for set_name in parse_sets(args.set):
+    set_names = resolve_family(args.set) if args.all_styles else parse_sets(args.set)
+    for set_name in set_names:
         for name in args.names:
             svg = fetch_icon(set_name, name)
             if svg is None:
@@ -199,10 +281,16 @@ def main() -> None:
     p_list.add_argument("--filter", metavar="TERM", help="Only show names containing TERM")
     p_list.set_defaults(func=cmd_list)
 
+    p_styles = sub.add_parser("styles", help="List style variants for a set (e.g. phosphor weights)")
+    p_styles.add_argument("set", help="Set name")
+    p_styles.set_defaults(func=cmd_styles)
+
     p_fetch = sub.add_parser("fetch", help="Fetch icons by exact name")
     p_fetch.add_argument("set", help="Set name(s), comma-separated")
     p_fetch.add_argument("names", nargs="+")
     p_fetch.add_argument("--output-dir", default=".", metavar="DIR")
+    p_fetch.add_argument("--all-styles", action="store_true",
+                         help="Fetch this icon in all style variants of the set family")
     p_fetch.set_defaults(func=cmd_fetch)
 
     p_search = sub.add_parser("search", help="Search names and download matches")
