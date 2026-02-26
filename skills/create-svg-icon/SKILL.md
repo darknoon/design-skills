@@ -95,16 +95,16 @@ Information you're looking for:
 - What's the overall visual style of the icon set?
   - If the user is making a one-off icon, then we can offer a couple alternatives of visual styles. see `references/icon-sets.md` for examples of popular styles and their characteristics.
 
-- If the user references a named icon or icon set → look up the icon from `references/icon-sets.md`, fetch its paths via `scripts/get-lucide-icon.py` (or equivalent), adapt as needed
+- If the user references a named icon set (e.g. "phosphor style", "lucide style") → fetch 3–5 representative SVGs from that set as visual style references. Use `get-icon.py search` to find a mix of simple and complex icons (see `references/icon-sets.md` for set names and `references/image-gen.md` for why references matter). Save to `.context/icon_skill/<name>/refs/`. These will be passed as `--reference` to t2i.py. **Do NOT just describe the style in the prompt text — always fetch real SVGs and pass them as references.**
 
 **Decide the generation method before proceeding:**
 
 | Icon type                                                          | Method                                 |
 | ------------------------------------------------------------------ | -------------------------------------- |
 | Simple geometric (arrow, check, chevron, plus, circle, line)       | Write SVG paths directly               |
-| Semi-complex (home, calendar, folder, lock)                        | Write SVG paths directly               |
+| Semi-complex (home, calendar, folder, lock)                        | **Use t2i.py + vectorize.py pipeline** |
 | Representational (animal, person, place, food, vehicle, flag, map) | **Use t2i.py + vectorize.py pipeline** |
-| Stylistic match to existing set                                    | Fetch reference SVG → adapt paths      |
+| Stylistic match to existing set                                    | Fetch reference SVGs → pass as `--reference` to t2i.py |
 
 When in doubt, prefer the t2i pipeline. Hand-written SVG paths are not good at organic shapes, geography, or anything with real-world visual complexity.
 
@@ -114,8 +114,21 @@ In a subagent, follow the sketching workflow in `references/02-icon-sketching.md
 
 For any icon requiring the **t2i pipeline**:
 
-1. Write 2–3 concept prompts (see `references/image-gen.md` for prompt tips and model selection)
-2. Run `uv run scripts/t2i.py "<prompt>" --output .context/icon_skill/<name>/concepts/<concept-N>.png` for each
+1. If a target icon set was identified in step 1, fetch and rasterize style references first:
+   ```
+   # Fetch SVGs from the set
+   uv run scripts/get-icon.py search <set> <term1> --count 3 --output-dir .context/icon_skill/<name>/refs/
+   uv run scripts/get-icon.py search <set> <term2> --count 2 --output-dir .context/icon_skill/<name>/refs/
+   # Rasterize them to PNG so they can be passed to the image generation API
+   uv run scripts/rasterize.py .context/icon_skill/<name>/refs/*.svg --output-dir .context/icon_skill/<name>/refs/
+   ```
+2. Write 2–3 concept prompts (see `references/image-gen.md` for prompt tips and model selection)
+3. Run t2i.py, passing the rasterized PNGs as `--reference` for style grounding:
+   ```
+   uv run scripts/t2i.py "<prompt>" --output .context/icon_skill/<name>/concepts/<concept-N>.png \
+     --reference .context/icon_skill/<name>/refs/*.png
+   ```
+   If no target set, omit `--reference`.
 3. Pick the best concept, then vectorize: `uv run scripts/vectorize.py <image.png> --auto-crop`
 4. Save the resulting SVG to `iteration-01/icon.svg`
 5. Rasterize for preview: `uv run scripts/rasterize.py iteration-01/icon.svg` (defaults to 1024×1024)

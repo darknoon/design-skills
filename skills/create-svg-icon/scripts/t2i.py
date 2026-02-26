@@ -42,7 +42,7 @@ def require_key(env_var: str, service: str) -> str:
     if key:
         return key
     print(f"\n  {service} API key not found.")
-    print(f"  Set it with:\n")
+    print("  Set it with:\n")
     print(f"      export {env_var}=your-key-here\n")
     print("  Or add it to a .env file in your project root.")
     sys.exit(1)
@@ -128,13 +128,12 @@ def generate_gemini(
     from google import genai
     from google.genai import types
 
-    img_config: dict = {"number_of_images": 1}
-    if aspect_ratio:
-        img_config["aspect_ratio"] = aspect_ratio
-    else:
-        width, height = size.split("x")
-        img_config["output_image_width"] = int(width)
-        img_config["output_image_height"] = int(height)
+    GEMINI_IMAGE_SIZES = {"512px", "1K", "2K", "4K"}
+    image_size = size if size in GEMINI_IMAGE_SIZES else None
+    image_config = types.ImageConfig(
+        aspect_ratio=aspect_ratio or None,
+        image_size=image_size,
+    )
 
     parts = []
     for ref_bytes, mime_type in references:
@@ -146,8 +145,8 @@ def generate_gemini(
         model=model,
         contents=[types.Content(parts=parts, role="user")],
         config=types.GenerateContentConfig(
-            response_modalities=["image", "text"],
-            image_generation_config=types.ImageGenerationConfig(**img_config),
+            response_modalities=["IMAGE"],
+            image_config=image_config,
         ),
     )
 
@@ -188,7 +187,8 @@ api keys (env or .env file):
     parser.add_argument("prompt", help="Image generation prompt")
     parser.add_argument("--model", default="gpt-image-1-mini")
     parser.add_argument("--output", default=None)
-    parser.add_argument("--size", default="1024x1024", help="WxH, e.g. 512x512")
+    parser.add_argument("--size", default="1024x1024",
+                        help="OpenAI: WxH e.g. 512x512. Gemini: 512px | 1K | 2K | 4K (ignored if not a valid Gemini size)")
     parser.add_argument(
         "--aspect-ratio",
         default="1:1",
