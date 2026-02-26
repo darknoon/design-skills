@@ -8,29 +8,7 @@
 #   "playwright",
 # ]
 # ///
-"""
-Text-to-image generation for icons.
-
-Usage:
-    uv run skills/create-svg-icon/scripts/t2i.py <prompt> [--model MODEL] [--output PATH] [--size SIZE] [--aspect-ratio RATIO] [--reference PATH ...]
-
-Models:
-    gpt-image-1             (default) Best for general icons, Apple/iOS style
-    gpt-image-1.5           OpenAI, weaker at icons
-    gemini-2.5-flash-image  Good for all icons, best at Android style
-    gemini-3.1-flash-image-preview  Needs more style description in prompt
-
-Examples:
-    uv run t2i.py "a person walking a dog, ux icon, outline, simple"
-    uv run t2i.py "search icon, filled" --model gemini-2.5-flash-image
-    uv run t2i.py "calendar icon" --output icons/calendar.png --size 512x512
-    uv run t2i.py "home icon" --model gemini-2.5-flash-image --aspect-ratio 16:9
-    uv run t2i.py "walking dog icon" --reference icons/search.svg icons/home.svg
-
-API keys:
-    OpenAI models  → set OPENAI_API_KEY in your environment or .env
-    Gemini models  → set GOOGLE_API_KEY in your environment or .env
-"""
+"""Text-to-image generation for icons."""
 
 import argparse
 import base64
@@ -39,14 +17,24 @@ import sys
 from pathlib import Path
 
 from dotenv import find_dotenv, load_dotenv  # type: ignore
+
 load_dotenv(find_dotenv(usecwd=True))
 
 sys.path.insert(0, str(Path(__file__).parent))
 from rasterize import render_svgs  # type: ignore  # noqa: E402
 
-OPENAI_MODELS = {"gpt-image-1", "gpt-image-1.5"}
+OPENAI_MODELS = {"gpt-image-1", "gpt-image-1.5", "gpt-image-1-mini"}
 GEMINI_MODELS = {"gemini-2.5-flash-image", "gemini-3.1-flash-image-preview"}
-MIME_BY_EXT = {"jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png", "webp": "image/webp"}
+
+# Outer orchestrator model for OpenAI's Responses API (must be a text/chat model, not image)
+# The image_generation tool internally routes to the selected OPENAI_MODEL
+OPENAI_ORCHESTRATOR = "gpt-4o"
+MIME_BY_EXT = {
+    "jpg": "image/jpeg",
+    "jpeg": "image/jpeg",
+    "png": "image/png",
+    "webp": "image/webp",
+}
 
 
 def require_key(env_var: str, service: str) -> str:
@@ -61,6 +49,7 @@ def require_key(env_var: str, service: str) -> str:
 
 
 # --- Reference image loading ---
+
 
 def load_references(paths: list[str]) -> list[tuple[bytes, str]]:
     """Load reference images, rendering SVGs to PNG via Playwright. Returns (bytes, mime_type) pairs."""
@@ -83,44 +72,59 @@ def load_references(paths: list[str]) -> list[tuple[bytes, str]]:
 
 # --- Generation ---
 
-def generate_openai(prompt: str, model: str, size: str, references: list[tuple[bytes, str]]) -> bytes:
+
+def generate_openai(
+    prompt: str,
+    model: str,
+    size: str,
+    references: list[tuple[bytes, str]],
+    orchestrator: str = OPENAI_ORCHESTRATOR,
+) -> bytes:
     from openai import OpenAI
 
     client = OpenAI(api_key=require_key("OPENAI_API_KEY", "OpenAI"))
 
-    if not references:
-        response = client.images.generate(
-            model=model,
-            prompt=prompt,
-            n=1,
-            size=size,
-            response_format="b64_json",
-        )
-        return base64.b64decode(response.data[0].b64_json)
-
-    # With references: use the responses API with image_generation tool
     content: list[dict] = [{"type": "input_text", "text": prompt}]
     for ref_bytes, mime_type in references:
         b64 = base64.b64encode(ref_bytes).decode()
-        content.append({
-            "type": "input_image",
-            "source": {"type": "base64", "media_type": mime_type, "data": b64},
-        })
+        content.append(
+            {
+                "type": "input_image",
+                "source": {"type": "base64", "media_type": mime_type, "data": b64},
+            }
+        )
 
     response = client.responses.create(
-        model=model,
+        model=orchestrator,
         input=[{"role": "user", "content": content}],
-        tools=[{"type": "image_generation", "size": size}],
+        tools=[
+            {
+                "type": "image_generation",
+                "model": model,
+                "size": size,
+                "quality": "low",
+                "output_format": "png",
+                "background": "transparent",
+            }
+        ],
     )
     for output in response.output:
         if output.type == "image_generation_call":
             return base64.b64decode(output.result)
 
-    print("No image returned by OpenAI. Try adjusting the prompt.")
+    print("No image returned by OpenAI. Model output:")
+    for output in response.output:
+        print(f"  type={output.type}: {output}")
     sys.exit(1)
 
 
-def generate_gemini(prompt: str, model: str, size: str, aspect_ratio: str, references: list[tuple[bytes, str]]) -> bytes:
+def generate_gemini(
+    prompt: str,
+    model: str,
+    size: str,
+    aspect_ratio: str,
+    references: list[tuple[bytes, str]],
+) -> bytes:
     from google import genai
     from google.genai import types
 
@@ -135,7 +139,7 @@ def generate_gemini(prompt: str, model: str, size: str, aspect_ratio: str, refer
     parts = []
     for ref_bytes, mime_type in references:
         parts.append(types.Part.from_bytes(data=ref_bytes, mime_type=mime_type))
-    parts.append(types.Part.from_text(prompt))
+    parts.append(types.Part.from_text(text=prompt))
 
     client = genai.Client(api_key=require_key("GOOGLE_API_KEY", "Google Gemini"))
     response = client.models.generate_content(
@@ -157,26 +161,68 @@ def generate_gemini(prompt: str, model: str, size: str, aspect_ratio: str, refer
 
 # --- Main ---
 
+
 def main():
-    parser = argparse.ArgumentParser(description="Generate an icon image.")
+    parser = argparse.ArgumentParser(
+        description="Generate an icon image from a text prompt.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+models:
+  gpt-image-1-mini        (default) fast, transparent background
+  gpt-image-1             higher quality OpenAI
+  gemini-2.5-flash-image  good for all icons, best at Android style
+  gemini-3.1-flash-image-preview  needs explicit style description
+
+examples:
+  uv run t2i.py "water bottle icon, outline, simple"
+  uv run t2i.py "search icon" --model gemini-2.5-flash-image
+  uv run t2i.py "home icon" --output icons/home.png --size 512x512
+  uv run t2i.py "walking dog icon" --reference icons/search.svg icons/home.svg
+  uv run t2i.py "icon" --orchestrator gpt-5.2
+
+api keys (env or .env file):
+  OPENAI_API_KEY   for gpt-image-* models
+  GOOGLE_API_KEY   for gemini-* models
+""",
+    )
     parser.add_argument("prompt", help="Image generation prompt")
-    parser.add_argument("--model", default="gpt-image-1")
+    parser.add_argument("--model", default="gpt-image-1-mini")
     parser.add_argument("--output", default=None)
     parser.add_argument("--size", default="1024x1024", help="WxH, e.g. 512x512")
-    parser.add_argument("--aspect-ratio", default="1:1", help="Gemini: 1:1 (default), 9:16, 16:9, 4:3, 3:4")
-    parser.add_argument("--reference", nargs="+", metavar="PATH", default=[],
-                        help="Reference images for style guidance (PNG, JPG, WebP, SVG). SVGs are rendered via Playwright.")
+    parser.add_argument(
+        "--aspect-ratio",
+        default="1:1",
+        help="Gemini: 1:1 (default), 9:16, 16:9, 4:3, 3:4",
+    )
+    parser.add_argument(
+        "--orchestrator",
+        default=OPENAI_ORCHESTRATOR,
+        help=f"OpenAI orchestrator model (default: {OPENAI_ORCHESTRATOR}, try gpt-5.2 if deprecated)",
+    )
+    parser.add_argument(
+        "--reference",
+        nargs="+",
+        metavar="PATH",
+        default=[],
+        help="Reference images for style guidance (PNG, JPG, WebP, SVG). SVGs are rendered via Playwright.",
+    )
     args = parser.parse_args()
 
     out = Path(args.output) if args.output else Path("icon.png")
     references = load_references(args.reference) if args.reference else []
 
     if args.model in OPENAI_MODELS:
-        image_bytes = generate_openai(args.prompt, args.model, args.size, references)
+        image_bytes = generate_openai(
+            args.prompt, args.model, args.size, references, args.orchestrator
+        )
     elif args.model in GEMINI_MODELS:
-        image_bytes = generate_gemini(args.prompt, args.model, args.size, args.aspect_ratio, references)
+        image_bytes = generate_gemini(
+            args.prompt, args.model, args.size, args.aspect_ratio, references
+        )
     else:
-        print(f"Unknown model '{args.model}'. Choose from: {', '.join(OPENAI_MODELS | GEMINI_MODELS)}")
+        print(
+            f"Unknown model '{args.model}'. Choose from: {', '.join(OPENAI_MODELS | GEMINI_MODELS)}"
+        )
         sys.exit(1)
 
     out.parent.mkdir(parents=True, exist_ok=True)
