@@ -1,0 +1,4 @@
+interface:
+  display_name: "SVG Icon Creator"
+  short_description: "Create SVG icons for interfaces"
+  default_prompt: "Use $create-svg-icon to draw a custom SVG icon in a specfic style."

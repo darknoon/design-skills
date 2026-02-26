@@ -1,0 +1,40 @@
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="1.5"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <!-- Person: head -->
+  <circle cx="6" cy="3.5" r="1.5" />
+  <!-- Person: torso -->
+  <path d="M6 5L6.5 9" />
+  <!-- Person: right arm forward, holding leash -->
+  <path d="M6.5 7L10 9" />
+  <!-- Person: left arm swinging back -->
+  <path d="M6.5 7L4.5 9" />
+  <!-- Person: right leg striding forward -->
+  <path d="M6.5 9L9 14L9 18" />
+  <!-- Person: left leg pushing back -->
+  <path d="M6.5 9L4.5 14L4 18" />
+  <!-- Leash -->
+  <path d="M10 9C11.5 9.5 12.5 11 14 11.5" />
+  <!-- Dog: body -->
+  <path d="M14 12.5C15 11.5 17.5 11.5 19.5 12.5" />
+  <!-- Dog: head and muzzle -->
+  <path d="M19.5 12.5C20.5 12 21.5 12.5 21.5 13.5C21.5 14.5 20.5 15 19.5 14.5" />
+  <!-- Dog: ear -->
+  <path d="M20.5 12.5C21 11.5 21.5 11 22 11.5" />
+  <!-- Dog: tail curled up -->
+  <path d="M14 12.5C13 11.5 12.5 10.5 13.5 9.5C14 9 14.5 9.5 14 10" />
+  <!-- Dog: front legs -->
+  <line x1="19" y1="13.5" x2="19" y2="17" />
+  <line x1="17.5" y1="13" x2="17.5" y2="16.5" />
+  <!-- Dog: back legs -->
+  <line x1="16" y1="13" x2="15.5" y2="16.5" />
+  <line x1="14.5" y1="13" x2="14" y2="16.5" />
+</svg>
