@@ -55,7 +55,7 @@ Each entry should include:
 
 - What you tried and why
 - The prompts you used for t2i generation
-- Links to every image generated (relative paths from the icon folder), so the user can open them directly
+- Every image — references, concepts, and iterations — embedded as `<img src="path" width="64" alt="label">` so they render at a readable size. Never use plain markdown `![](path)` (renders too large) and never list image paths as plain text.
 - Your assessment of what worked and what didn't
 - What you plan to do next
 - **Cost of each API call** (append immediately after each call using the rates in `references/image-gen.md` and `references/vectorization.md`)
@@ -63,6 +63,7 @@ Each entry should include:
 Maintain a running `## Cost` section at the bottom of the file, updated after each billable call. Report the total to the user when the skill completes.
 
 **Cost rates** (for quick reference):
+
 - `t2i.py` with `gpt-image-1-mini`: $0.005 (low) / $0.011 (med) / $0.036 (high) per image
 - `t2i.py` with `gpt-image-1`: $0.011 (low) / $0.042 (med) / $0.167 (high) per image
 - `t2i.py` with Gemini models: ~$0.039 per image
@@ -75,35 +76,46 @@ Example:
 
 User has requested an icon of a man walking a dog in sf symbols style.
 
+## Style References
+
+Fetched 3 SF Symbols icons related to walking/people as style grounding:
+
+| figure.walk | pawprint | figure.walk.dog |
+|-------------|----------|-----------------|
+| <img src="refs/figure.walk_regular_medium_template.png" width="64"> | <img src="refs/pawprint_regular_medium_template.png" width="64"> | <img src="refs/figure.walk.dog_regular_medium_template.png" width="64"> |
+
 ## Concepts
 
 ### Concept 1 — man-left-dog-right
 
-Model: gpt-image-1-mini (low) — prompt: "man walking dog, sf symbols style, outline"
+Prompt: "man walking dog, sf symbols style, outline" (saved to `concepts/01-man-left-dog-right/prompt.txt`)
 
-![concept 1](concepts/01-man-left-dog-right/concept.png)
+<img src="concepts/01-man-left-dog-right/A.png" width="64" alt="1A — gpt-image-1-mini">
+<img src="concepts/01-man-left-dog-right/B.png" width="64" alt="1B — gemini-2.5-flash-image">
 
 ### Concept 2 — dog-dominant
 
-Model: gpt-image-1-mini (low) — prompt: "small dog pulling leash, owner cropped, sf symbols"
+Prompt: "small dog pulling leash, owner cropped, sf symbols" (saved to `concepts/02-dog-dominant/prompt.txt`)
 
-![concept 2](concepts/02-dog-dominant/concept.png)
+<img src="concepts/02-dog-dominant/A.png" width="64" alt="2A — gpt-image-1-mini">
+<img src="concepts/02-dog-dominant/B.png" width="64" alt="2B — gemini-2.5-flash-image">
 
 ### Concept 3 — overhead-leash
 
-Model: gpt-image-1-mini (low) — prompt: "top-down view of leash connecting shoes and paw prints, sf symbols"
+Prompt: "top-down view of leash connecting shoes and paw prints, sf symbols" (saved to `concepts/03-overhead-leash/prompt.txt`)
 
-![concept 3](concepts/03-overhead-leash/concept.png)
+<img src="concepts/03-overhead-leash/A.png" width="64" alt="3A — gpt-image-1-mini">
+<img src="concepts/03-overhead-leash/B.png" width="64" alt="3B — gemini-2.5-flash-image">
 
 ### Selection
 
-→ Concept 1 selected. Best silhouette readability, leash is clear. Dog reads slightly as a cat — will refine in iteration.
+→ Concept 1B selected. Best silhouette readability, leash is clear. Dog reads slightly as a cat — will refine in iteration.
 
 ## Iteration 1
 
 Vectorized concept 1 with --auto-crop. Clean output but lost leash detail in vectorization.
 
-![iteration 1](iteration-01/icon.png)
+<img src="iteration-01/icon.png" width="64" alt="iteration 1">
 
 Next: Try without --auto-crop and manually trim the viewBox.
 
@@ -111,18 +123,18 @@ Next: Try without --auto-crop and manually trim the viewBox.
 
 Re-vectorized without auto-crop. Leash detail preserved. Viewbox trimmed manually.
 
-![iteration 2](iteration-02/icon.png)
+<img src="iteration-02/icon.png" width="64" alt="iteration 2">
 
 → Approved. Moving to final.
 
 ## Cost
 
-| Step | Model | Quality | Count | Cost |
-|------|-------|---------|-------|------|
-| Concept generation | gpt-image-1-mini | low | 3 | $0.015 |
-| Iteration re-generation | gpt-image-1-mini | low | 1 | $0.005 |
-| Vectorization | Quiver | — | 2 | $0.600 |
-| **Total** | | | | **$0.620** |
+| Step                    | Model            | Quality | Count | Cost       |
+| ----------------------- | ---------------- | ------- | ----- | ---------- |
+| Concept generation      | gpt-image-1-mini | low     | 3     | $0.015     |
+| Iteration re-generation | gpt-image-1-mini | low     | 1     | $0.005     |
+| Vectorization           | Quiver           | —       | 2     | $0.600     |
+| **Total**               |                  |         |       | **$0.620** |
 ```
 
 **1. Gain context about the current project and icon needs**
@@ -139,11 +151,11 @@ Information you're looking for:
 
 **Decide the generation method before proceeding:**
 
-| Icon type                                                          | Method                                 |
-| ------------------------------------------------------------------ | -------------------------------------- |
-| Simple geometric (arrow, check, chevron, plus, circle, line)       | Write SVG paths directly               |
-| Semi-complex (home, calendar, folder, lock)                        | **Use t2i.py + vectorize.py pipeline** |
-| Representational (animal, person, place, food, vehicle, flag, map) | **Use t2i.py + vectorize.py pipeline** |
+| Icon type                                                          | Method                                                 |
+| ------------------------------------------------------------------ | ------------------------------------------------------ |
+| Simple geometric (arrow, check, chevron, plus, circle, line)       | Write SVG paths directly                               |
+| Semi-complex (home, calendar, folder, lock)                        | **Use t2i.py + vectorize.py pipeline**                 |
+| Representational (animal, person, place, food, vehicle, flag, map) | **Use t2i.py + vectorize.py pipeline**                 |
 | Stylistic match to existing set                                    | Fetch reference SVGs → pass as `--reference` to t2i.py |
 
 When in doubt, prefer the t2i pipeline. Hand-written SVG paths are not good at organic shapes, geography, or anything with real-world visual complexity.
@@ -163,15 +175,31 @@ For any icon requiring the **t2i pipeline**:
    uv run scripts/rasterize.py .context/icon_skill/<name>/refs/*.svg --output-dir .context/icon_skill/<name>/refs/
    ```
 2. Write 2–3 concept prompts (see `references/image-gen.md` for prompt tips and model selection)
-3. Run t2i.py, passing the rasterized PNGs as `--reference` for style grounding:
+3. **Choose models deliberately** before running anything. See `references/image-gen.md` for the full comparison; the key heuristic:
+   - Target style is **Apple/iOS/SF Symbols** → prefer `gpt-image-1` or `gpt-image-1-mini`
+   - Target style is **Material/Android** → prefer `gemini-2.5-flash-image`
+   - **No strong target style**, or you want to see how the prompt reads differently → run both models for contrast
+   - When the best model choice isn't obvious, propose your plan to the user in one sentence before generating
+
+   For each concept, produce at least **2 variations** — either the same prompt across two models, or two prompt variations on the same model. Save each to a lettered file and write the prompt alongside it:
+
    ```
-   uv run scripts/t2i.py "<prompt>" --output .context/icon_skill/<name>/concepts/<concept-N>.png \
+   uv run scripts/t2i.py "<prompt>" \
+     --output .context/icon_skill/<name>/concepts/01-<slug>/A.png \
+     --reference .context/icon_skill/<name>/refs/*.png
+   echo "<prompt>" > .context/icon_skill/<name>/concepts/01-<slug>/prompt.txt
+
+   # Second variation — different model or adjusted prompt
+   uv run scripts/t2i.py "<prompt>" --model gemini-2.5-flash-image \
+     --output .context/icon_skill/<name>/concepts/01-<slug>/B.png \
      --reference .context/icon_skill/<name>/refs/*.png
    ```
-   If no target set, omit `--reference`.
-3. Pick the best concept, then vectorize: `uv run scripts/vectorize.py <image.png> --auto-crop`
-4. Save the resulting SVG to `iteration-01/icon.svg`
-5. Rasterize for preview: `uv run scripts/rasterize.py iteration-01/icon.svg` (defaults to 1024×1024)
+
+   If no target set, omit `--reference`. **Save `prompt.txt` immediately** — don't rely on PROGRESS.md alone to preserve it. Update PROGRESS.md with the prompt and embed the generated images after each concept, not after all concepts are done.
+
+4. Pick the best concept, then vectorize: `uv run scripts/vectorize.py <image.png> --auto-crop`
+5. Save the resulting SVG to `iteration-01/icon.svg`
+6. Rasterize for preview: `uv run scripts/rasterize.py iteration-01/icon.svg` (defaults to 1024×1024)
 
 Each subagent should run `uv run` commands directly — no dependency checks, version checks, or setup steps. `uv` handles everything. Output a summary of the images generated and their paths.
 

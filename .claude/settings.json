@@ -8,7 +8,10 @@
       "Bash(mkdir -p *)",
       "Bash(uvx ruff check /Users/andrew/Developer/Prefix/design-skills/skills/create-svg-icon/scripts/t2i.py)",
       "WebFetch(domain:fonts.google.com)",
-      "WebFetch(domain:raw.githubusercontent.com)"
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebSearch",
+      "WebFetch(domain:platform.openai.com)",
+      "WebFetch(domain:developers.openai.com)"
     ]
   }
 }

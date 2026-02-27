@@ -33,6 +33,7 @@ Sets with style variants (use `styles` subcommand to list):
   heroicons, heroicons-24-solid, heroicons-20-solid, heroicons-16-solid
   tabler, tabler-filled
   phosphor, phosphor-thin, phosphor-light, phosphor-bold, phosphor-fill, phosphor-duotone
+  material-symbols, material-symbols-rounded, material-symbols-sharp
 """
 
 import argparse
@@ -103,6 +104,24 @@ SETS: dict[str, dict] = {
         "raw": "https://raw.githubusercontent.com/radix-ui/icons/master/packages/radix-icons/icons/{name}.svg",
         "owner": "radix-ui", "repo": "icons", "branch": "master", "path": "packages/radix-icons/icons",
     },
+    "material-symbols": {
+        "raw": "https://raw.githubusercontent.com/google/material-design-icons/master/symbols/web/{name}/materialsymbolsoutlined/{name}_24px.svg",
+        "owner": "google", "repo": "material-design-icons", "branch": "master",
+        "path": "symbols/web",
+        "codepoints_url": "https://raw.githubusercontent.com/google/material-design-icons/master/variablefont/MaterialSymbolsOutlined%5BFILL%2CGRAD%2Copsz%2Cwght%5D.codepoints",
+    },
+    "material-symbols-rounded": {
+        "raw": "https://raw.githubusercontent.com/google/material-design-icons/master/symbols/web/{name}/materialsymbolsrounded/{name}_24px.svg",
+        "owner": "google", "repo": "material-design-icons", "branch": "master",
+        "path": "symbols/web",
+        "codepoints_url": "https://raw.githubusercontent.com/google/material-design-icons/master/variablefont/MaterialSymbolsRounded%5BFILL%2CGRAD%2Copsz%2Cwght%5D.codepoints",
+    },
+    "material-symbols-sharp": {
+        "raw": "https://raw.githubusercontent.com/google/material-design-icons/master/symbols/web/{name}/materialsymbolssharp/{name}_24px.svg",
+        "owner": "google", "repo": "material-design-icons", "branch": "master",
+        "path": "symbols/web",
+        "codepoints_url": "https://raw.githubusercontent.com/google/material-design-icons/master/variablefont/MaterialSymbolsSharp%5BFILL%2CGRAD%2Copsz%2Cwght%5D.codepoints",
+    },
 }
 
 ALL_SET_NAMES = list(SETS.keys())
@@ -129,6 +148,11 @@ STYLE_FAMILIES: dict[str, list[str]] = {
         "phosphor-fill",
         "phosphor-duotone",
     ],
+    "material-symbols": [
+        "material-symbols",          # outlined (default)
+        "material-symbols-rounded",
+        "material-symbols-sharp",
+    ],
 }
 
 def resolve_family(set_name: str) -> list[str]:
@@ -151,11 +175,31 @@ def fetch_svg(url: str) -> bytes | None:
 
 
 def list_icons(set_name: str) -> list[str]:
-    """Return sorted icon names via GitHub Trees API (cached per session)."""
+    """Return sorted icon names (cached per session).
+
+    For sets with a codepoints_url, parses the codepoints file instead of
+    the GitHub Trees API (which is truncated for large repos like material-design-icons).
+    """
     if set_name in _listing_cache:
         return _listing_cache[set_name]
 
     s = SETS[set_name]
+
+    if "codepoints_url" in s:
+        try:
+            with urllib.request.urlopen(s["codepoints_url"]) as r:
+                text = r.read().decode()
+        except urllib.error.HTTPError as e:
+            print(f"[{set_name}] Error fetching codepoints {e.code}", file=sys.stderr)
+            return []
+        names = sorted(
+            line.split()[0]
+            for line in text.splitlines()
+            if line.strip()
+        )
+        _listing_cache[set_name] = names
+        return names
+
     api = (
         f"https://api.github.com/repos/{s['owner']}/{s['repo']}"
         f"/git/trees/{s['branch']}?recursive=1"

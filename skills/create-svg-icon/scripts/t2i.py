@@ -78,21 +78,43 @@ def generate_openai(
     model: str,
     size: str,
     references: list[tuple[bytes, str]],
+    input_image: tuple[bytes, str] | None = None,
     orchestrator: str = OPENAI_ORCHESTRATOR,
 ) -> bytes:
     from openai import OpenAI
 
     client = OpenAI(api_key=require_key("OPENAI_API_KEY", "OpenAI"))
 
-    content: list[dict] = [{"type": "input_text", "text": prompt}]
-    for ref_bytes, mime_type in references:
-        b64 = base64.b64encode(ref_bytes).decode()
-        content.append(
-            {
-                "type": "input_image",
-                "source": {"type": "base64", "media_type": mime_type, "data": b64},
-            }
+    # Build instruction text
+    if input_image and references:
+        text = (
+            "I'm attaching an image to edit, plus style reference images. "
+            "Edit the image to match the style of the references with this description: "
+            + prompt
         )
+    elif input_image:
+        text = "I'm attaching an image to edit. Edit it with this description: " + prompt
+    elif references:
+        text = (
+            "I'm attaching reference images that show the target visual style. "
+            "Generate a NEW image matching that style with this description: "
+            + prompt
+        )
+    else:
+        text = prompt
+
+    content: list[dict] = [{"type": "input_text", "text": text}]
+    if input_image:
+        input_bytes, input_mime = input_image
+        content.append({
+            "type": "input_image",
+            "image_url": f"data:{input_mime};base64,{base64.b64encode(input_bytes).decode()}",
+        })
+    for ref_bytes, mime_type in references:
+        content.append({
+            "type": "input_image",
+            "image_url": f"data:{mime_type};base64,{base64.b64encode(ref_bytes).decode()}",
+        })
 
     response = client.responses.create(
         model=orchestrator,
@@ -107,6 +129,7 @@ def generate_openai(
                 "background": "transparent",
             }
         ],
+        tool_choice="required",
     )
     for output in response.output:
         if output.type == "image_generation_call":
@@ -124,6 +147,7 @@ def generate_gemini(
     size: str,
     aspect_ratio: str,
     references: list[tuple[bytes, str]],
+    input_image: tuple[bytes, str] | None = None,
 ) -> bytes:
     from google import genai
     from google.genai import types
@@ -136,6 +160,9 @@ def generate_gemini(
     )
 
     parts = []
+    if input_image:
+        input_bytes, input_mime = input_image
+        parts.append(types.Part.from_bytes(data=input_bytes, mime_type=input_mime))
     for ref_bytes, mime_type in references:
         parts.append(types.Part.from_bytes(data=ref_bytes, mime_type=mime_type))
     parts.append(types.Part.from_text(text=prompt))
@@ -177,6 +204,8 @@ examples:
   uv run t2i.py "search icon" --model gemini-2.5-flash-image
   uv run t2i.py "home icon" --output icons/home.png --size 512x512
   uv run t2i.py "walking dog icon" --reference icons/search.svg icons/home.svg
+  uv run t2i.py "clean up the shape" --input-image iteration-01/icon.png
+  uv run t2i.py "simplify, match this style" --input-image iter-01/icon.png --reference refs/style-a.png refs/style-b.png
   uv run t2i.py "icon" --orchestrator gpt-5.2
 
 api keys (env or .env file):
@@ -200,24 +229,31 @@ api keys (env or .env file):
         help=f"OpenAI orchestrator model (default: {OPENAI_ORCHESTRATOR}, try gpt-5.2 if deprecated)",
     )
     parser.add_argument(
+        "--input-image",
+        metavar="PATH",
+        default=None,
+        help="Source image to edit (PNG, JPG, WebP, SVG). Separate from style references.",
+    )
+    parser.add_argument(
         "--reference",
         nargs="+",
         metavar="PATH",
         default=[],
-        help="Reference images for style guidance (PNG, JPG, WebP, SVG). SVGs are rendered via Playwright.",
+        help="Style reference images (PNG, JPG, WebP, SVG). SVGs are rendered via Playwright.",
     )
     args = parser.parse_args()
 
     out = Path(args.output) if args.output else Path("icon.png")
+    input_image = load_references([args.input_image])[0] if args.input_image else None
     references = load_references(args.reference) if args.reference else []
 
     if args.model in OPENAI_MODELS:
         image_bytes = generate_openai(
-            args.prompt, args.model, args.size, references, args.orchestrator
+            args.prompt, args.model, args.size, references, input_image, args.orchestrator
         )
     elif args.model in GEMINI_MODELS:
         image_bytes = generate_gemini(
-            args.prompt, args.model, args.size, args.aspect_ratio, references
+            args.prompt, args.model, args.size, args.aspect_ratio, references, input_image
         )
     else:
         print(

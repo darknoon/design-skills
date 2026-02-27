@@ -123,6 +123,35 @@ uv run scripts/vectorize.py icon.png --n 3 --output-dir candidates/
 
 ---
 
+### `get-sf-symbol.py` — Fetch SF Symbols from macOS (macOS only)
+
+Extracts SF Symbols SVGs from the local macOS system framework via the `act` CLI
+(Asset Catalog Tinkerer). First run extracts ~8,500 SVGs to a local cache (~30s);
+subsequent calls are instant.
+
+```bash
+# List all symbol names (fast — no extraction needed)
+uv run scripts/get-sf-symbol.py list
+uv run scripts/get-sf-symbol.py list --filter arrow
+
+# Fetch specific symbols
+uv run scripts/get-sf-symbol.py fetch arrow.right star star.fill
+uv run scripts/get-sf-symbol.py fetch arrow.right --output-dir refs/
+
+# Search and download matches
+uv run scripts/get-sf-symbol.py search arrow --count 5 --output-dir refs/
+
+# Non-default weight/size/rendering
+uv run scripts/get-sf-symbol.py fetch arrow.right --weight ultraLight --size large
+uv run scripts/get-sf-symbol.py fetch heart.fill --rendering multicolor
+```
+
+**Requires:** `brew install asset-catalog-tinkerer` (or the installed app at `/Applications/Asset Catalog Tinkerer.app`)
+
+**Supported sets:** ~8,500 symbols (macOS 15). Weights: ultraLight → black. Rendering: template, hierarchical, multicolor, palette.
+
+---
+
 ### `get-lucide-icon.py` — Fetch a single Lucide icon (legacy)
 
 ```bash
@@ -167,7 +196,7 @@ uv run playwright install chromium
 | File | When to read |
 |------|--------------|
 | `references/icon-sets.md` | Choosing or fetching from an icon set |
-| `references/icon-sets/<set>.md` | Details on a specific icon set |
+| `references/icon-sets/<set>.md` | Details on a specific icon set (lucide, heroicons, tabler, phosphor, material-symbols, sf-symbols, …) |
 | `references/image-gen.md` | Prompt tips, model selection, cost rates |
 | `references/vectorization.md` | Quiver API details and pricing |
 | `references/icon-design-principles.md` | SVG quality rules, grid, stroke conventions |
