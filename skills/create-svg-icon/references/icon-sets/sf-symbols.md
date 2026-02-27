@@ -20,9 +20,22 @@ in about 30 seconds. Subsequent calls are instant file copies.
 
 `list` is always instant — it reads a local plist without any extraction.
 
+## Sizing and weight model
+
+SF Symbols are built on the **SF Pro variable font**. Both weight and scale behave as variable font axes, not discrete values:
+
+- **Weight is a seamlessly interpolated variable axis.** The named stops (`ultraLight` → `black`) are checkpoints, but the font interpolates continuously between them — `.fontWeight(.light)` can resolve to any value between `thin` and `regular` without jumping. The SVG exports are static snapshots at the named stops only.
+- **Scale categories** (`small`, `medium`, `large`) map to the font's optical size axis. They are not pixel sizes — `medium` aligns the symbol's cap-height with the adjacent text cap-height at the same point size.
+- **Baseline alignment** is baked in: each SVG includes padding so the visual weight sits on the text baseline when rendered at any point size. This padding is intentional — don't crop it.
+- **Optical compensation by scale**: `small` has slightly heavier strokes for legibility at small sizes; `large` is optically lighter. These differences are pre-baked into the separate SVG variants.
+- **Point size → pixels**: at 17pt body / 2× display, `medium` renders at ~34px. At 28pt, ~56px. The symbol follows the font size, not a fixed grid.
+
+When designing to match SF Symbols: design for the silhouette at small sizes (~20–22px effective), keep the baseline padding intact, and treat stroke weight as a continuous property that must feel consistent with the surrounding font weight.
+
 ## Variants
 
-SVGs in the cache follow the naming pattern:
+SVGs in the cache are static exports — named snapshots of the underlying variable font axes:
+
 ```
 {symbol.name}_{weight}_{size}_{rendering}.svg
 ```
@@ -30,7 +43,7 @@ SVGs in the cache follow the naming pattern:
 | Axis | Default | Options |
 |------|---------|---------|
 | Weight | `regular` | `ultraLight` `thin` `light` `regular` `medium` `semibold` `bold` `heavy` `black` |
-| Size | `medium` | `small` `medium` `large` |
+| Size | `medium` | `small` (heavier strokes) `medium` (default) `large` (lighter strokes) |
 | Rendering | `template` | `template` (monochromatic) `hierarchical` `multicolor` `palette` |
 
 Not every symbol has every combination. Missing combinations fall back silently.
