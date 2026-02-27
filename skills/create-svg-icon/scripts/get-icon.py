@@ -28,7 +28,7 @@ Usage:
     uv run get-icon.py search lucide globe --count 3
     uv run get-icon.py search lucide,heroicons,tabler globe --count 3
 
-Sets (single style): lucide, feather, radix
+Sets (single style): lucide, feather, radix, codicons
 Sets with style variants (use `styles` subcommand to list):
   heroicons, heroicons-24-solid, heroicons-20-solid, heroicons-16-solid
   tabler, tabler-filled
@@ -103,6 +103,10 @@ SETS: dict[str, dict] = {
     "radix": {
         "raw": "https://raw.githubusercontent.com/radix-ui/icons/master/packages/radix-icons/icons/{name}.svg",
         "owner": "radix-ui", "repo": "icons", "branch": "master", "path": "packages/radix-icons/icons",
+    },
+    "codicons": {
+        "raw": "https://raw.githubusercontent.com/microsoft/vscode-codicons/main/src/icons/{name}.svg",
+        "owner": "microsoft", "repo": "vscode-codicons", "branch": "main", "path": "src/icons",
     },
     "material-symbols": {
         "raw": "https://raw.githubusercontent.com/google/material-design-icons/master/symbols/web/{name}/materialsymbolsoutlined/{name}_24px.svg",

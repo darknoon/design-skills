@@ -83,6 +83,7 @@ uv run scripts/get-icon.py styles heroicons
 | `feather` | Single style |
 | `phosphor` | `phosphor` (regular), `phosphor-thin`, `phosphor-light`, `phosphor-bold`, `phosphor-fill`, `phosphor-duotone` |
 | `radix` | Single style |
+| `codicons` | Single style |
 
 ---
 

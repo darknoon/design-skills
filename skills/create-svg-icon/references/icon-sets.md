@@ -11,6 +11,7 @@ Read the file for the specific icon set the user is referencing. If the set is u
 | Feather | Stroke, minimal | 24 | MIT | [icon-sets/feather.md](icon-sets/feather.md) |
 | Material Symbols | Rounded/sharp/outlined | 24 | Apache 2.0 | [icon-sets/material-symbols.md](icon-sets/material-symbols.md) |
 | Radix Icons | Stroke, 15px base | 15 | MIT | [icon-sets/radix.md](icon-sets/radix.md) |
+| Codicons (VS Code) | Fill, IDE/dev-tool UI | 16 | CC-BY-4.0 | [icon-sets/codicons.md](icon-sets/codicons.md) |
 
 ## Adapting an icon from any set
 

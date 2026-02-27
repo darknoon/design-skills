@@ -19,6 +19,18 @@ At a high level, we
 - 4. vectorize with quiver
 - 5. help add to production for their codebase (if applicable)
 
+## Strict Mode for Network-Dependent Icon Generation (HARD GATE)
+
+This skill's t2i + vectorization pipeline requires network access. The following rules are non-negotiable:
+
+- When the user requests a **style-match icon** (e.g., Codicon, Lucide, Phosphor, SF Symbols, etc.) or **any task that uses the t2i/vectorize pipeline**: real references must be fetched and passed as `--reference` images. If `get-icon.py`, `t2i.py`, or `vectorize.py` cannot reach the network, **stop and refuse**.
+- **Do not fall back to manually drawing an SVG** unless the user explicitly asks for a manual/offline fallback. A hand-drawn path is not a substitute for the pipeline — it silently degrades quality and defeats the purpose of this skill.
+- If fetch, generation, or vectorization fails due to network restrictions, return a refusal:
+
+  > I can't complete this request in the current environment because it requires network access (reference fetch + model/vectorization calls), and network is unavailable. I'm stopping here rather than producing an offline substitute.
+
+- There are **no exceptions**. Even simple geometric icons should go through the pipeline to maintain consistency. If the network is down, the task cannot proceed.
+
 ## Workflow
 
 Save temporary images somewhere safe in the user's current directory (don't put things in /tmp) using the following structure if the prompt was for example:
@@ -149,16 +161,16 @@ Information you're looking for:
 
 - If the user references a named icon set (e.g. "phosphor style", "lucide style") → fetch 3–5 representative SVGs from that set as visual style references. Use `get-icon.py search` to find a mix of simple and complex icons (see `references/icon-sets.md` for set names and `references/image-gen.md` for why references matter). Save to `.context/icon_skill/<name>/refs/`. These will be passed as `--reference` to t2i.py. **Do NOT just describe the style in the prompt text — always fetch real SVGs and pass them as references.**
 
-**Decide the generation method before proceeding:**
+**All icons go through the t2i + vectorize pipeline.** Do not hand-write SVG paths.
 
-| Icon type                                                          | Method                                                 |
-| ------------------------------------------------------------------ | ------------------------------------------------------ |
-| Simple geometric (arrow, check, chevron, plus, circle, line)       | Write SVG paths directly                               |
-| Semi-complex (home, calendar, folder, lock)                        | **Use t2i.py + vectorize.py pipeline**                 |
-| Representational (animal, person, place, food, vehicle, flag, map) | **Use t2i.py + vectorize.py pipeline**                 |
-| Stylistic match to existing set                                    | Fetch reference SVGs → pass as `--reference` to t2i.py |
+| Icon type            | Method                                        |
+| -------------------- | --------------------------------------------- |
+| Simple geometric     | Search the icon set first (`get-icon.py search`) — these almost always already exist. Fall back to the t2i pipeline only if no match is found. |
+| Semi-complex         | Use t2i.py + vectorize.py pipeline            |
+| Representational     | Use t2i.py + vectorize.py pipeline            |
+| Stylistic match      | Fetch reference SVGs → pass as `--reference`  |
 
-When in doubt, prefer the t2i pipeline. Hand-written SVG paths are not good at organic shapes, geography, or anything with real-world visual complexity.
+Examples: *simple geometric* = arrow, check, chevron, plus, circle, line. *Semi-complex* = home, calendar, folder, lock. *Representational* = animal, person, place, food, vehicle, flag, map.
 
 **2. Consider various concepts**
 
