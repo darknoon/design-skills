@@ -1,3 +1,5 @@
 .env
 .context/
 *.pyc
+
+.DS_Store
