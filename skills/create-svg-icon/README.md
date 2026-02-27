@@ -233,12 +233,6 @@ uv run scripts/vectorize.py .context/icon_skill/water-bottle-01/concepts/01-flip
 uv run scripts/rasterize.py .context/icon_skill/water-bottle-01/iteration-01/icon.svg
 ```
 
-### For simple geometric icons (arrow, check, plus)
-
-Write SVG paths directly using the templates in `references/04-icon-production.md`. No t2i or vectorization needed.
-
----
-
 ## Cost tracking
 
 The PROGRESS.md journal tracks costs after each billable API call. At the end of a session the skill reports the total to the user. Quick reference:
@@ -250,7 +244,6 @@ The PROGRESS.md journal tracks costs after each billable API call. At the end of
 | `t2i.py` | Gemini | ~$0.039/image |
 | `vectorize.py` | Quiver | $0.30/call |
 
----
 
 ## Symlink for Claude Code
 
