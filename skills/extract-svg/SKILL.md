@@ -1,41 +1,41 @@
 ---
 name: extract-svg
-description: Discover and extract all SVGs from any web page. Navigates to a URL using browser automation, scans the DOM for SVGs (inline, img tags, CSS backgrounds, shadow DOM, symbols, sprites, templates, web components, and more), and returns the collected SVGs. Use when asked to grab, extract, rip, collect, or download SVGs from a website or URL.
+description: Discover and extract all SVGs from any web page. Navigates to a URL using browser automation, scans the DOM for SVGs (inline, img tags, CSS backgrounds, shadow DOM, symbols, sprites, templates, web components, and more), resolves CSS-dependent styles into each SVG, and saves them as self-contained .svg files. Use when asked to grab, extract, rip, collect, or download SVGs from a website or URL.
 argument-hint: "[URL to extract SVGs from]"
-allowed-tools: Bash(agent-browser *), Bash(cat *), Bash(mkdir -p *), Read, Write, Glob
 ---
 
 # Extract SVGs from Web Pages
 
 This skill automates SVG discovery and extraction from any web page using Vercel's agent-browser. It implements the same comprehensive extraction strategies as the svg-gobbler browser extension, adapted into a standalone JS script that runs via `agent-browser eval`.
 
-## Workflow
+Extracted inline SVGs have all class-dependent CSS resolved and inlined as `style` attributes, so each `.svg` file is fully self-contained and renderable independently.
 
-1. **Navigate** — `agent-browser open <url>` and wait for load
-2. **Extract** — pipe `scripts/extract-svgs.js` into the page context
-3. **Resolve** — fetch the actual SVG content for image references
-4. **Save** — write each SVG to disk, generate a manifest
-
-## Running the Extraction
+## Quick Start
 
 ```bash
-# 1. Open the page
-agent-browser open "https://example.com"
+# Open the page and wait for it to load
+pnpx agent-browser open "https://example.com"
+pnpx agent-browser wait --load networkidle
 
-# 2. Wait for full load
-agent-browser wait --load networkidle
-
-# 3. Run the extraction script
-agent-browser eval --stdin < skills/extract-svg/scripts/extract-svgs.js
+# Extract all SVGs and save to disk
+pnpx agent-browser eval --stdin < skills/extract-svg/scripts/extract-svgs.js \
+  | python3 skills/extract-svg/scripts/save-svgs.py
 ```
 
-The script returns a JSON string with this shape:
+Output goes to `.context/extracted-svg/<domain>/` by default. Use `--output DIR` to override.
 
+## Scripts
+
+### `scripts/extract-svgs.js`
+
+Runs in the page context via `agent-browser eval --stdin`. Scans the DOM using 12 discovery strategies, resolves computed CSS styles on classed elements, and returns JSON to stdout.
+
+Returns:
 ```json
 {
   "data": [
-    { "id": 1, "name": "logo", "type": "inline", "svg": "<svg ...>...</svg>" },
-    { "id": 2, "name": "icon-arrow", "type": "image-ref", "svg": "<img src=\"/icons/arrow.svg\">" }
+    { "id": 1, "name": "logo", "type": "inline", "svg": "<svg xmlns=\"...\" ...>...</svg>" },
+    { "id": 2, "name": "icon", "type": "image-ref", "svg": "<img src=\"/icon.svg\">" }
   ],
   "count": 2,
   "host": "example.com",
@@ -44,49 +44,24 @@ The script returns a JSON string with this shape:
 }
 ```
 
-### SVG types in results
+### `scripts/save-svgs.py`
 
-| Type | Meaning | Action needed |
-|------|---------|---------------|
-| `inline` | Full `<svg>` markup, ready to use | Save directly |
-| `image-ref` | `<img>` tag pointing to a `.svg` URL | Fetch the URL to get actual SVG content |
-| `symbol` | `<symbol>` element, not directly renderable | Wrap in `<svg>` with `<use>` reference |
-| `g-element` | `<g>` group, no root `<svg>` | Wrap in `<svg>` with computed viewBox |
+Reads JSON from stdin, writes individual `.svg` files. Handles:
+- **inline** — saved directly (xmlns ensured)
+- **symbol** — wrapped in `<svg>` with `<use>` reference
+- **g-element** — wrapped in `<svg>` with viewBox
+- **image-ref** — URLs logged to `_image-refs.txt` for manual fetching
 
-## Resolving Image References
+## CSS Inlining
 
-For results with `type: "image-ref"`, extract the `src` attribute and fetch the SVG content:
+The extraction script resolves computed styles for any SVG child element that has a `class` attribute. This handles cases like:
+- Icon sets with `.accent` classes styled via CSS custom properties
+- SVGs styled via external stylesheets
+- Class-based fill/stroke/opacity overrides
 
-```bash
-# Fetch a referenced SVG file
-agent-browser eval "fetch('https://example.com/icon.svg').then(r=>r.text())"
-```
-
-For data URIs, decode in-page:
-
-```bash
-agent-browser eval "decodeURIComponent('data:image/svg+xml,...'.split(',').slice(1).join(','))"
-```
-
-## Output Structure
-
-Save to `.context/extracted-svg/<domain>/` or a user-specified directory:
-
-```
-.context/extracted-svg/<domain>/
-  manifest.md          # Summary table of all found SVGs
-  inline/
-    001-logo.svg
-    002-nav-icon.svg
-  images/
-    arrow.svg           # Fetched from <img src="*.svg">
-  symbols/
-    symbol-name.svg     # Wrapped <symbol> elements
-```
+The resolved values (e.g. `fill: color(display-p3 1 0.94 0.65)`) are written as inline `style` attributes, and the `class` attribute is removed. The result is a standalone SVG that looks correct without its parent page's CSS.
 
 ## Discovery Strategies (12 total)
-
-The `scripts/extract-svgs.js` script scans for SVGs using these strategies:
 
 | # | Strategy | What it finds |
 |---|----------|---------------|
@@ -103,9 +78,16 @@ The `scripts/extract-svgs.js` script scans for SVGs using these strategies:
 | 11 | CSS sprite sheets | SVG sprites via `background-image` + `background-position` |
 | 12 | Picture elements | `<picture>` with `<source type="image/svg+xml">` |
 
+## Fetching Image References
+
+Image-ref results contain `<img>` tags pointing to `.svg` URLs. To fetch them while the browser session is still open:
+
+```bash
+pnpx agent-browser eval "fetch('https://example.com/icon.svg').then(r=>r.text())"
+```
+
 ## Notes
 
 - Zero-cost skill — no API calls, just browser automation and local file I/O
-- CORS restrictions may prevent fetching some externally-referenced SVGs; note these but don't fail
-- Very large pages may have hundreds of SVGs; offer to filter by minimum size or type
+- CORS restrictions may prevent fetching some externally-referenced SVGs; these are logged but don't fail the run
 - The extraction script runs in ~100ms on most pages — single synchronous DOM scan

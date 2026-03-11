@@ -9,8 +9,9 @@
 // Returns JSON with all discovered SVGs and page metadata.
 // Inline SVGs have class-dependent styles resolved and inlined so each
 // SVG is fully self-contained and renderable without external CSS.
+// Image-ref SVGs are fetched in-page to resolve their actual content.
 
-(() => {
+(async () => {
   // ---------------------------------------------------------------------------
   // Helpers
   // ---------------------------------------------------------------------------
@@ -338,7 +339,66 @@
   };
 
   // ---------------------------------------------------------------------------
-  // Assemble, deduplicate, return
+  // Resolve image-ref URLs to actual SVG content
+  // ---------------------------------------------------------------------------
+
+  const resolveUrl = (src) => {
+    if (src.startsWith('data:')) return src;
+    if (src.startsWith('http://') || src.startsWith('https://')) return src;
+    if (src.startsWith('//')) return 'https:' + src;
+    if (src.startsWith('/')) return location.origin.replace(/\/$/, '') + src;
+    return location.origin.replace(/\/$/, '') + '/' + src.replace(/^\.\//, '');
+  };
+
+  const decodeSvgDataUri = (src) => {
+    if (src.includes(';base64,')) {
+      return atob(src.split(';base64,')[1]);
+    }
+    if (src.includes(';utf8,') || src.includes(';charset=utf-8,')) {
+      return src.split(/;(?:utf8|charset=utf-8),/)[1];
+    }
+    return decodeURIComponent(src.split(',').slice(1).join(','));
+  };
+
+  const fetchSvgContent = async (imgHtml) => {
+    const srcMatch = imgHtml.match(/src=["']([^"']+)["']/);
+    if (!srcMatch) return null;
+    const src = srcMatch[1];
+
+    // Data URIs: decode directly
+    if (src.startsWith('data:image/svg+xml')) {
+      try {
+        return decodeSvgDataUri(src);
+      } catch (_) {
+        return null;
+      }
+    }
+
+    // Remote URLs: fetch (agent-browser's Chromium has no CORS restrictions
+    // since it controls the browser directly)
+    const url = resolveUrl(src);
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 5000);
+      const resp = await fetch(url, {
+        headers: { Accept: 'image/svg+xml, text/xml, application/xml, */*' },
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+      if (!resp.ok) return null;
+      const text = await resp.text();
+      // Verify it's actually SVG
+      if (text.includes('<svg') || text.includes('http://www.w3.org/2000/svg')) {
+        return text;
+      }
+      return null;
+    } catch (_) {
+      return null;
+    }
+  };
+
+  // ---------------------------------------------------------------------------
+  // Assemble, deduplicate, resolve, return
   // ---------------------------------------------------------------------------
 
   const all = [
@@ -358,14 +418,34 @@
 
   const unique = [...new Set(all)].filter((s) => s.trim().length > 0);
 
+  // Build initial result list
+  const items = unique.map((svg, i) => ({
+    id: i + 1,
+    name: bestName(svg, i),
+    type: classify(svg),
+    svg,
+  }));
+
+  // Resolve image-refs: fetch actual SVG content, promote to inline
+  const resolved = await Promise.all(
+    items.map(async (item) => {
+      if (item.type !== 'image-ref') return item;
+      const content = await fetchSvgContent(item.svg);
+      if (content) {
+        // Ensure xmlns for standalone rendering
+        let svg = content.trim();
+        if (svg.includes('<svg') && !svg.includes('xmlns=')) {
+          svg = svg.replace('<svg', '<svg xmlns="http://www.w3.org/2000/svg"');
+        }
+        return { ...item, type: 'inline', svg, originalRef: item.svg };
+      }
+      return item; // keep as image-ref if fetch failed
+    })
+  );
+
   return JSON.stringify({
-    data: unique.map((svg, i) => ({
-      id: i + 1,
-      name: bestName(svg, i),
-      type: classify(svg),
-      svg,
-    })),
-    count: unique.length,
+    data: resolved,
+    count: resolved.length,
     host: location.host,
     href: location.href,
     origin: location.origin,
