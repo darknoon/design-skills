@@ -2,6 +2,12 @@
 .context/
 scratch/
 *.pyc
+__pycache__/
+.ruff_cache/
 
 .DS_Store
 .claude/settings.local.json
+
+**/node_modules/
+bun.lock
+**/test-fixtures/

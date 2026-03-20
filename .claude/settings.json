@@ -6,7 +6,7 @@
       "Bash(python scripts/*)",
       "Bash(python skills/create-svg-icon/scripts/*)",
       "Bash(mkdir -p *)",
-      "Bash(uvx ruff check /Users/andrew/Developer/Prefix/design-skills/skills/create-svg-icon/scripts/t2i.py)",
+      "Bash(uvx ruff check skills/create-svg-icon/scripts/*)",
       "WebFetch(domain:fonts.google.com)",
       "WebFetch(domain:raw.githubusercontent.com)",
       "WebSearch",

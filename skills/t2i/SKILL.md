@@ -2,7 +2,7 @@
 name: t2i
 description: Generate images from a text prompt using AI image models (Gemini or OpenAI). Use when asked to generate, create, or render an image. Supports reference images and input images for editing. Good for quick image generation without the full icon pipeline.
 argument-hint: "[prompt] [--model MODEL] [--output PATH]"
-allowed-tools: Read, Write, Glob, Bash(uv run /Users/andrew/Developer/Prefix/design-skills/skills/create-svg-icon/scripts/t2i.py *), Bash(mkdir -p *)
+allowed-tools: Read, Write, Glob, Bash(uv run skills/create-svg-icon/scripts/t2i.py *), Bash(mkdir -p *)
 ---
 
 # Text-to-Image Generation
@@ -12,15 +12,15 @@ Generate images from a text prompt using the `t2i.py` script.
 ## Script location
 
 ```
-/Users/andrew/Developer/Prefix/design-skills/skills/create-svg-icon/scripts/t2i.py
+skills/create-svg-icon/scripts/t2i.py
 ```
 
-The script reads API keys from `/Users/andrew/Developer/Prefix/design-skills/.env` automatically via `python-dotenv`.
+The script reads API keys from `.env (at the repo root)` automatically via `python-dotenv`.
 
 ## Basic usage
 
 ```bash
-uv run /Users/andrew/Developer/Prefix/design-skills/skills/create-svg-icon/scripts/t2i.py "<prompt>" --output <path>
+uv run skills/create-svg-icon/scripts/t2i.py "<prompt>" --output <path>
 ```
 
 ## Models
@@ -46,10 +46,10 @@ uv run /Users/andrew/Developer/Prefix/design-skills/skills/create-svg-icon/scrip
 When the user wants to see results from multiple models, run both in parallel and show the results side by side:
 
 ```bash
-uv run /Users/andrew/Developer/Prefix/design-skills/skills/create-svg-icon/scripts/t2i.py "<prompt>" \
+uv run skills/create-svg-icon/scripts/t2i.py "<prompt>" \
   --model gpt-image-1-mini --output out/A-openai.png
 
-uv run /Users/andrew/Developer/Prefix/design-skills/skills/create-svg-icon/scripts/t2i.py "<prompt>" \
+uv run skills/create-svg-icon/scripts/t2i.py "<prompt>" \
   --model gemini-2.5-flash-image --output out/B-gemini.png
 ```
 
@@ -70,7 +70,7 @@ Dave's `/api/fs/` endpoint serves files from the `data/` directory. Absolute pat
 
 ## API keys
 
-Keys are loaded from `/Users/andrew/Developer/Prefix/design-skills/.env`:
+Keys are loaded from `.env (at the repo root)`:
 - `OPENAI_API_KEY` — for `gpt-image-*` models
 - `GOOGLE_API_KEY` — for `gemini-*` models
 
