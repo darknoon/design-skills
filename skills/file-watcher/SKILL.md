@@ -1,82 +1,90 @@
 ---
 name: file-watcher
-description: Watch files for changes and emit structured status lines to stdout. Use this skill whenever you need to monitor files for modifications, track file creation/deletion, observe build outputs, or keep tabs on files that external processes are writing to. Also use when the user asks to "watch", "monitor", "tail changes", or "track" files, or when you need a long-running background process that reports filesystem events as they happen.
+description: Watch files for changes and react to modifications in real time. Use this skill whenever you need to monitor files, track file creation/deletion, observe build outputs, or keep tabs on files that external processes are writing to. Also use when the user asks to "watch", "monitor", "tail changes", or "track" files. Supports two modes — a standalone CLI script and an MCP channel server.
 ---
 
 # File Watcher
 
-A lightweight Bun script that watches a list of files and emits one compact status line per change event to stdout. Designed to run in a background sub-agent or terminal so a parent process can react to filesystem changes without polling.
+Watches files for changes using OS-native events (fsevents on macOS, inotify on Linux) and reports structured diffs. Two entrypoints:
 
-## Usage
+- **Channel server** (`channel.ts`) — an MCP server that exposes `watch`, `unwatch`, and `list_watched` tools so files can be added/removed dynamically at runtime. When launched with channel support, it pushes change events directly into the session. Without channel support, agents can poll via `get_changes`.
+- **CLI script** (`watch.ts`) — emits one status line per change to stdout. Useful for agents that don't support channels, or for piping into other tools.
+
+Both share the same core logic (`watcher.ts`): snapshot diffing, binary detection, debouncing, and location tracking.
+
+## Channel Server (MCP)
+
+Register in `.mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "file-watcher": {
+      "command": "bun",
+      "args": ["run", "-i", "./skills/file-watcher/scripts/channel.ts"]
+    }
+  }
+}
+```
+
+Launch Claude Code with:
 
 ```bash
-bun run skills/file-watcher/scripts/watch.ts [options] <file1> [file2] [file3] ...
+claude --dangerously-load-development-channels server:file-watcher
 ```
 
-Paths can be relative or absolute. Files that don't exist yet will be watched for creation.
+### Tools
 
-### Options
+| Tool | Description |
+|------|-------------|
+| `watch` | Start watching a file (absolute or relative path). Files that don't exist yet are watched for creation. |
+| `unwatch` | Stop watching a file. |
+| `list_watched` | List all currently watched files. |
+| `ping` | Test if channel notifications are active. Sends a pong via the channel. If you see a `<channel type="pong">` tag alongside the tool result, changes will be pushed automatically. If not, use `get_changes` to poll. |
+| `get_changes` | Returns and clears buffered change events. Use this to poll when channels are not active (e.g., in agents like OpenCode that don't support channels). |
 
-- `--threshold <n>` — Max characters for inline diff output (default: 200). Diffs larger than this get summarized instead.
+### Channel Events
 
-### Examples
+Changes arrive as `<channel source="file-watcher">` tags with these attributes:
+
+| Attribute | Description |
+|-----------|-------------|
+| `type` | `A` (added), `M` (modified), `D` (deleted) |
+| `path` | Relative path to the changed file |
+| `format` | `canvas` if the file is a `.canvas` file with semantic diffing |
+| `location` | `line:char` position of the change (non-canvas files only) |
+
+For **`.canvas` files**, the body contains a semantic node diff:
+
+```
+Video Gen.canvas
+  A id=abc123 text "lets add 3 images belo…"
+  M id=def456 pos,color=4 "placeholder-dog"
+  D id=xyz789 text "old status note"
+  A 2 edge(s)
+```
+
+Each line: operation (`A`/`M`/`D`), node ID, what changed (for `M`: `text`, `pos`, `size`, `color=N`, `type=T`, `file`), and a truncated label.
+
+For other files, the body contains an inline diff if small, or a summary like `+N -N chars` for larger changes.
+
+## CLI Script
 
 ```bash
-# Watch two files with default threshold
-bun run scripts/watch.ts src/app.tsx src/data.json
-
-# Watch with a larger inline diff threshold
-bun run scripts/watch.ts --threshold 500 dist/bundle.js
-
-# Watch a file that doesn't exist yet
-bun run scripts/watch.ts output/report.csv
+bun run skills/file-watcher/scripts/watch.ts [--threshold N] <file1> [file2] ...
 ```
 
-## Output Format
-
-One line per event:
+Emits one line per event to stdout:
 
 ```
-<status> <path>:<location> <detail>
+<status>  <path>:<location>  <detail>
 ```
-
-| Status | Meaning  | Detail                                                       |
-|--------|----------|--------------------------------------------------------------|
-| A      | Added    | File contents if small, otherwise file size                  |
-| M      | Modified | Inline diff if small, otherwise `+N -N chars`               |
-| D      | Deleted  | (no detail)                                                  |
-
-### Location
-
-The location after the path is a `line:char` position (both 1-indexed) describing **where the change is in the file AFTER the change was applied** — i.e., the file as it currently exists on disk. This means you can use the location directly with a `Read(file, offset=line)` call to jump straight to the changed region without reading the whole file.
-
-- Single-line change: `path:42:5` — line 42, starting at character 5
-- Multi-line change: `path:10:1-85` — lines 10 through 85, first change at char 1
-- Binary or large added files: no location (just the path)
-- Deleted files: no location (file no longer exists)
-
-### Detail rules
-
-- **Text, small change** (within threshold): the actual changed text inline, with before in backticks and after in backticks separated by `->`
-- **Text, large change** (over threshold): `+<added> -<removed> chars`
-- **Binary file**: `binary <old_size> -> <new_size>`
-- **Added file**: contents if under threshold, otherwise just the size
-- **Deleted file**: no detail
-
-### Examples
 
 ```
 M src/app.tsx:42:8  `color: red` -> `color: blue`
 M src/data.json:10:1-85  +2034 -89 chars
-M assets/logo.png  binary 12.4KB -> 13.1KB
 A src/new-file.ts:1:1  248B
 D src/old-util.ts
 ```
 
-## How It Works
-
-- Uses Bun's built-in `fs.watch` for OS-native file watching (fsevents on macOS, inotify on Linux).
-- Keeps the last-known content of each watched file in memory to compute diffs on change.
-- Stdout is line-buffered so consumers see events immediately.
-- Runs indefinitely until killed (Ctrl+C / SIGTERM).
-- For files that don't exist yet, watches the parent directory and filters for the target filename.
+`--threshold <n>` controls the max characters for inline diffs (default: 200).

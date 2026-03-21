@@ -38,7 +38,7 @@ Pick based on what matters most — speed, quality, or cost. All costs are in co
 | `ideogram-3` | — | — | Text in images. |
 | `chatgpt-image` | 183 | 60s | OpenAI quality, but expensive and slow. |
 
-**Video:** `wan-2-1`, `kling-2-5`, `kling-2-6`, `veo-3-1` (see `references/api-details.md`)
+**Video:** `wan-2-1`, `kling-2-5`, `kling-2-6`, `veo-3-1` (see `references/api-details.md`). Video models may not be available on all plans — if you get a 404, tell the user the model isn't available on their current Krea plan rather than retrying.
 
 **Upscaling:** `topaz` (faithful, 22K), `topaz-bloom` (creative, 10K), `topaz-generative` (creative, 16K) (see `references/api-details.md`)
 
@@ -62,7 +62,7 @@ bun run skills/krea/scripts/krea.ts "<prompt>" [options]
 
 ## Billing
 
-API calls draw from the same CU pool as the Krea web app. Failed/cancelled jobs cost nothing. See `references/api-details.md` for plan tiers and pricing.
+API calls draw from the same CU pool as the Krea web app. Failed/cancelled jobs cost nothing. See `references/api-details.md` for plan tiers and pricing. There is no API endpoint to check the user's plan or available models — if a model returns 404, it's not available on their plan.
 
 ## References
 
