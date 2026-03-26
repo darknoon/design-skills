@@ -10,6 +10,7 @@ Claude Code skills for design and development workflows.
 | **[extract-svg](skills/extract-svg/)** | Extract all SVGs from any web page — inline, img tags, CSS backgrounds, shadow DOM, sprites, and more. |
 | **[file-watcher](skills/file-watcher/)** | Watch files for changes and emit structured status lines to stdout. Reports diffs, line locations, and file events (add/modify/delete). |
 | **[krea](skills/krea/)** | Generate images and videos via the Krea API (Flux, Seedream, Imagen, Topaz, and more). |
+| **[smart-file-watcher](skills/smart-file-watcher/)** | File watcher with LLM triage — Gemini Flash Lite monitors changes, handles immediate responses in-file, and delegates complex work to the main model. |
 | **[t2i](skills/t2i/)** | Quick text-to-image generation using Gemini or OpenAI models. |
 
 ## Setup
