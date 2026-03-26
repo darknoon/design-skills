@@ -22,10 +22,8 @@ export interface DelegateAction {
 
 export type TriageAction = AcknowledgeAction | DelegateAction;
 
-/** Result of a live triage — zero or more actions in order */
-export interface LiveTriageResult {
-  actions: TriageAction[];
-}
+/** Callback fired for each tool call as it arrives */
+export type OnAction = (action: TriageAction) => void;
 
 // --- System prompt ---
 
@@ -55,41 +53,13 @@ When in doubt, delegate rather than ignore.`;
 
 // --- Tool declarations ---
 
-const TOOLS = [
-  {
-    name: "acknowledge_user",
-    description: "Write a brief message to the file so the user knows you saw their input. Keep it short — 1 sentence max.",
-    parameters: {
-      type: "object" as const,
-      properties: {
-        text: {
-          type: "string" as const,
-          description: "Short message to show the user (e.g. 'Got it!', 'On it — generating...', 'Noted.')",
-        },
-      },
-      required: ["text"],
-    },
-  },
-  {
-    name: "delegate_task",
-    description: "Hand off a task to the main AI agent for complex work. Describe what the user wants clearly.",
-    parameters: {
-      type: "object" as const,
-      properties: {
-        summary: {
-          type: "string" as const,
-          description: "What the user wants done, written for the main agent to act on",
-        },
-      },
-      required: ["summary"],
-    },
-  },
-];
+import type { FunctionDeclaration } from "@google/genai";
+import TOOLS_RAW from "./tools.json";
+const TOOLS = TOOLS_RAW as unknown as FunctionDeclaration[];
 
-// --- Live session manager ---
+// --- Live session ---
 
 const SESSION_MAX_MS = 9 * 60 * 1000;
-const RESPONSE_TIMEOUT_MS = 10_000;
 
 let ai: GoogleGenAI | null = null;
 let session: Session | null = null;
@@ -98,148 +68,101 @@ let sessionModel = "";
 let resumptionHandle: string | undefined;
 let connecting = false;
 
-// Per-request state
-let pendingResolve: ((result: LiveTriageResult) => void) | null = null;
-let pendingReject: ((err: Error) => void) | null = null;
-let responseTimer: Timer | null = null;
-let ttftTimestamp = 0;
-let requestStartTime = 0;
-let pendingActions: TriageAction[] = [];
-// Text fallback
-let responseChunks: string[] = [];
+/** Callback for the current active triage request. Null when idle. */
+let onAction: OnAction | null = null;
 
 function getClient(): GoogleGenAI {
   if (ai) return ai;
   const apiKey = process.env.GOOGLE_API_KEY || process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    throw new Error("Missing GOOGLE_API_KEY or GEMINI_API_KEY environment variable");
-  }
+  if (!apiKey) throw new Error("Missing GOOGLE_API_KEY or GEMINI_API_KEY");
   ai = new GoogleGenAI({ apiKey });
   return ai;
 }
 
-function finishRequest() {
-  if (responseTimer) clearTimeout(responseTimer);
-  responseTimer = null;
-
-  const elapsed = Date.now() - requestStartTime;
-  const ttft = ttftTimestamp > 0 ? ttftTimestamp - requestStartTime : elapsed;
-  log(`live timing: ttft=${ttft}ms e2e=${elapsed}ms actions=${pendingActions.length}`);
-
-  if (!pendingResolve) return;
-  const resolve = pendingResolve;
-  pendingResolve = null;
-  pendingReject = null;
-
-  const result: LiveTriageResult = { actions: [...pendingActions] };
-  pendingActions = [];
-  responseChunks = [];
-  resolve(result);
+/**
+ * Send text via sendRealtimeInput. Native-audio models reject sendClientContent
+ * with text, but accept text through the realtime input path.
+ */
+function sendText(sess: Session, text: string) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- SDK types don't expose text on sendRealtimeInput yet
+  (sess as any).sendRealtimeInput({ text });
 }
 
-function sendToolResponse(fcId: string) {
-  if (session && fcId) {
-    try {
-      (session as any).sendToolResponse({
-        functionResponses: [{
-          id: fcId,
-          response: { status: "ok" },
-        }],
-      });
-    } catch (err) {
-      log(`tool response error: ${err}`);
-    }
+function sendToolResponse(fcId: string, fcName: string, response: Record<string, unknown> = { result: "ok" }) {
+  if (!session) return;
+  try {
+    session.sendToolResponse({
+      functionResponses: [{
+        id: fcId,
+        name: fcName,
+        response,
+      }],
+    });
+  } catch (err) {
+    log(`tool response error: ${err}`);
   }
 }
 
+
 function onMessage(message: LiveServerMessage) {
-  // Handle tool calls
-  const toolCall = (message as any).toolCall;
-  if (toolCall?.functionCalls) {
-    if (ttftTimestamp === 0) ttftTimestamp = Date.now();
-
-    for (const fc of toolCall.functionCalls) {
+  // Tool calls — process each one immediately
+  if (message.toolCall?.functionCalls) {
+    for (const fc of message.toolCall.functionCalls) {
       const args = fc.args as Record<string, string>;
-      log(`tool call: ${fc.name}(${JSON.stringify(args)})`);
+      const id = fc.id ?? "";
+      const name = fc.name ?? "";
 
-      if (fc.name === "acknowledge_user") {
-        pendingActions.push({ type: "acknowledge", text: args.text || "" });
-        sendToolResponse(fc.id);
-      } else if (fc.name === "delegate_task") {
-        pendingActions.push({ type: "delegate", summary: args.summary || "" });
-        sendToolResponse(fc.id);
-      } else {
-        log(`unknown tool call: ${fc.name}`);
-        sendToolResponse(fc.id);
+      // Always respond to keep session unblocked
+      sendToolResponse(id, name);
+
+      if (!onAction) {
+        log(`stray tool call: ${name}(${JSON.stringify(args)})`);
+        continue;
+      }
+
+      log(`tool call: ${name}(${JSON.stringify(args)})`);
+      if (name === "acknowledge_user") {
+        onAction({ type: "acknowledge", text: args.text || "" });
+      } else if (name === "delegate_task") {
+        onAction({ type: "delegate", summary: args.summary || "" });
       }
     }
   }
 
-  // Text fallback
+  // Log if model sends audio or text instead of tool calls
   const parts = message.serverContent?.modelTurn?.parts;
   if (parts) {
     for (const part of parts) {
-      if (part.text) {
-        if (ttftTimestamp === 0) ttftTimestamp = Date.now();
-        responseChunks.push(part.text);
-      }
+      if (part.text) log(`model text: ${part.text.slice(0, 100)}`);
+      if ((part as any).inlineData) log(`model audio chunk`);
     }
   }
-
-  // Turn complete — resolve
   if (message.serverContent?.turnComplete) {
-    // If model responded with text instead of tools, treat as ignore with a log
-    if (responseChunks.length > 0 && pendingActions.length === 0) {
-      const text = responseChunks.join("");
-      log(`model responded with text (no tool calls): ${text.slice(0, 200)}`);
-      // Try to parse as JSON fallback
-      try {
-        const parsed = JSON.parse(text);
-        if (parsed.action === "delegate") {
-          pendingActions.push({ type: "delegate", summary: parsed.delegation_summary || text });
-        }
-        if (parsed.response_text) {
-          pendingActions.unshift({ type: "acknowledge", text: parsed.response_text });
-        }
-      } catch {
-        // Not JSON, just ignore
-      }
-    }
-    finishRequest();
+    log(`turn complete`);
   }
 
   // Session resumption
-  const resumption = (message as any).sessionResumptionUpdate;
-  if (resumption?.handle) {
-    resumptionHandle = resumption.handle;
-    log(`resumption handle updated`);
+  if (message.sessionResumptionUpdate?.newHandle) {
+    resumptionHandle = message.sessionResumptionUpdate.newHandle;
   }
 
   // GoAway
-  const goAway = (message as any).goAway;
-  if (goAway) {
-    log(`goAway received, timeLeft: ${goAway.timeLeft}`);
+  if (message.goAway) {
+    log(`goAway received, timeLeft: ${message.goAway.timeLeft}`);
   }
 }
 
-/**
- * Connect (or reconnect) the live session eagerly.
- */
-export async function connectSession(model: string): Promise<boolean> {
-  if (connecting) {
-    log("connectSession: already connecting, skipping");
-    return false;
-  }
+// --- Connection management ---
 
+export async function connectSession(model: string): Promise<boolean> {
+  if (connecting) return false;
   const now = Date.now();
 
   if (session && sessionModel === model && (now - sessionStartTime < SESSION_MAX_MS)) {
-    log("connectSession: session already active");
     return true;
   }
 
   if (session) {
-    log("connectSession: closing stale session");
     try { session.close(); } catch {}
     session = null;
   }
@@ -249,14 +172,17 @@ export async function connectSession(model: string): Promise<boolean> {
   log(`connecting live session: ${model}`);
 
   try {
-    const connectConfig: any = {
+    session = await client.live.connect({
       model,
       config: {
-        responseModalities: [Modality.TEXT],
-        systemInstruction: {
-          parts: [{ text: SYSTEM_PROMPT }],
-        },
+        responseModalities: [Modality.AUDIO],
+        speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: "Zephyr" } } },
+        systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
         tools: [{ functionDeclarations: TOOLS }],
+        contextWindowCompression: {
+          triggerTokens: "25000",
+          slidingWindow: { targetTokens: "12000" },
+        },
         sessionResumption: resumptionHandle ? { handle: resumptionHandle } : {},
       },
       callbacks: {
@@ -264,32 +190,16 @@ export async function connectSession(model: string): Promise<boolean> {
         onmessage: onMessage,
         onerror: (e: ErrorEvent) => {
           log(`live session error: ${e.message}`);
-          if (pendingReject) {
-            const reject = pendingReject;
-            pendingResolve = null;
-            pendingReject = null;
-            reject(new Error(`Live session error: ${e.message}`));
-          }
+          onAction = null;
         },
         onclose: (e: CloseEvent) => {
           log(`live session closed: code=${e.code} reason=${e.reason}`);
           session = null;
           connecting = false;
-          if (pendingReject) {
-            const reject = pendingReject;
-            pendingResolve = null;
-            pendingReject = null;
-            reject(new Error(`Live session closed: ${e.reason}`));
-          }
+          onAction = null;
         },
       },
-    };
-
-    if (resumptionHandle) {
-      log(`resuming with handle: ${resumptionHandle.slice(0, 20)}...`);
-    }
-
-    session = await client.live.connect(connectConfig);
+    });
     sessionStartTime = now;
     sessionModel = model;
     connecting = false;
@@ -297,7 +207,7 @@ export async function connectSession(model: string): Promise<boolean> {
     return true;
   } catch (err) {
     connecting = false;
-    log(`live session connect error: ${err}`);
+    log(`connect error: ${err}`);
     return false;
   }
 }
@@ -314,23 +224,34 @@ async function ensureSession(model: string): Promise<Session> {
 
 export interface LiveTriageStats {
   ttft: number;
-  e2e: number;
   sessionAge: number;
 }
 
-let lastStats: LiveTriageStats = { ttft: 0, e2e: 0, sessionAge: 0 };
-export function getLastStats(): LiveTriageStats { return lastStats; }
-
-export function isSessionActive(): boolean {
-  return session !== null;
+let lastTtft = 0;
+export function getLastStats(): LiveTriageStats {
+  return { ttft: lastTtft, sessionAge: Date.now() - sessionStartTime };
 }
 
+/**
+ * Send a file-change batch to the live triage session.
+ * Calls `handler` for each tool call as it arrives — acknowledge first, then delegate.
+ * Returns a promise that resolves after a timeout (for ignore cases where no tools are called).
+ */
 export async function triageLive(
   batch: EventBatch,
-  model = "gemini-3.1-flash-live-preview"
-): Promise<LiveTriageResult> {
+  handler: OnAction,
+  model = "gemini-3.1-flash-live-preview",
+  timeoutMs = 6000
+): Promise<void> {
   const batchAge = Date.now() - batch.timestamps[0];
   const eventSpan = batch.timestamps[batch.timestamps.length - 1] - batch.timestamps[0];
+
+  // For canvas files, the semantic diff is enough — don't send the full JSON,
+  // it overwhelms the realtime model. For markdown, a short snippet is useful.
+  let contextSnippet = "";
+  if (batch.fileType === "markdown" && batch.currentContent) {
+    contextSnippet = `\n--- FILE EXCERPT ---\n${batch.currentContent.slice(0, 1000)}`;
+  }
 
   const userMessage = [
     `File: ${batch.relPath} (${batch.fileType})`,
@@ -338,53 +259,42 @@ export async function triageLive(
     "",
     "--- DIFFS ---",
     ...batch.diffs,
-    "",
-    batch.currentContent
-      ? `--- CURRENT FILE CONTENT ---\n${batch.currentContent.slice(0, 4000)}`
-      : "(file content unavailable)",
-  ].join("\n");
+    contextSnippet,
+  ].filter(Boolean).join("\n");
 
-  requestStartTime = Date.now();
-  ttftTimestamp = 0;
-  pendingActions = [];
-  responseChunks = [];
+  log(`triage input:\n${userMessage}`);
+
+  const start = Date.now();
+  lastTtft = 0;
+
+  // Set callback — tool calls fire handler directly as they arrive
+  onAction = (action) => {
+    if (lastTtft === 0) lastTtft = Date.now() - start;
+    handler(action);
+  };
 
   try {
     const sess = await ensureSession(model);
-
-    const result = await new Promise<LiveTriageResult>((resolve, reject) => {
-      pendingResolve = resolve;
-      pendingReject = reject;
-
-      responseTimer = setTimeout(() => {
-        if (pendingResolve) {
-          log(`live response timeout after ${RESPONSE_TIMEOUT_MS}ms`);
-          finishRequest();
-        }
-      }, RESPONSE_TIMEOUT_MS);
-
-      sess.sendClientContent({ turns: userMessage });
-    });
-
-    const elapsed = Date.now() - requestStartTime;
-    const ttft = ttftTimestamp > 0 ? ttftTimestamp - requestStartTime : elapsed;
-    lastStats = { ttft, e2e: elapsed, sessionAge: Date.now() - sessionStartTime };
-
-    return result;
+    sendText(sess, userMessage);
   } catch (err) {
-    log(`live triage error: ${err}`);
-    session = null;
-    return {
-      actions: [{
-        type: "delegate",
-        summary: `Live triage error: ${err}\n${batch.diffs.join("\n")}`,
-      }],
-    };
+    log(`triage send error: ${err}`);
+    onAction = null;
+    handler({ type: "delegate", summary: `Triage error: ${err}\n${batch.diffs.join("\n")}` });
+    return;
   }
+
+  // Clear onAction after timeout so stale responses don't fire.
+  // Don't block — return immediately so the next batch can be processed.
+  setTimeout(() => {
+    if (onAction) {
+      log(`triage: no tool calls after ${timeoutMs}ms`);
+      onAction = null;
+    }
+  }, timeoutMs);
 }
 
 /**
- * Send a message to the live session (context from the big model, etc.).
+ * Send context to the live session (from the big model, etc.).
  */
 export async function sendToSession(
   message: string,
@@ -392,7 +302,7 @@ export async function sendToSession(
 ): Promise<boolean> {
   try {
     const sess = await ensureSession(model);
-    sess.sendClientContent({ turns: message });
+    sendText(sess, message);
     log(`sent to session: "${message.slice(0, 80)}"`);
     return true;
   } catch (err) {
@@ -401,7 +311,6 @@ export async function sendToSession(
   }
 }
 
-/** Close the live session */
 export function closeLiveSession() {
   if (session) {
     try { session.close(); } catch {}

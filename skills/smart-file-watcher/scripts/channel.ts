@@ -10,7 +10,7 @@ import { resolve, relative, basename, extname } from "path";
 import { FileWatcher, type ChangeEvent } from "./watcher";
 import type { CanvasNode, CanvasData } from "./canvas-types";
 import { triage, type EventBatch, type TriageResult, type NodeGeometry } from "./triage";
-import { triageLive, getLastStats, closeLiveSession, sendToSession, connectSession, type LiveTriageResult } from "./triage-live";
+import { triageLive, getLastStats, closeLiveSession, sendToSession, connectSession } from "./triage-live";
 import {
   canvasAddNode,
   canvasUpdateNode,
@@ -132,6 +132,81 @@ function canvasDiff(prevJson: string, currJson: string): CanvasDiffResult | null
 
   if (lines.length === 0) return null;
   return { text: lines.map(l => "  " + l).join("\n"), changedNodes };
+}
+
+// --- Rich triage context for canvas files ---
+
+function clipMiddle(s: string, max: number): string {
+  s = s.replace(/\n/g, " ").trim();
+  if (s.length <= max) return s;
+  const half = Math.floor((max - 3) / 2);
+  return s.slice(0, half) + "..." + s.slice(-half);
+}
+
+function nodeSnippet(n: CanvasNode): string {
+  switch (n.type) {
+    case "text": return clipMiddle(n.text, 40);
+    case "file": return clipMiddle(n.file, 40);
+    case "link": return clipMiddle(n.url, 40);
+    case "group": return n.label ? clipMiddle(n.label, 40) : "group";
+  }
+}
+
+function distance(a: { x: number; y: number }, b: { x: number; y: number }): number {
+  return Math.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2);
+}
+
+const MAX_NODE_CONTENT = 300;
+
+/**
+ * Build a rich diff for the triage model. For each changed node:
+ * - Node content (capped at MAX_NODE_CONTENT chars, clipped around change)
+ * - Nearest neighbors with id/type/brief snippet
+ */
+function buildTriageDiff(
+  changedNodeIds: string[],
+  filePath: string
+): string | null {
+  let canvas: CanvasData;
+  try {
+    canvas = JSON.parse(readFileSync(filePath, "utf-8"));
+  } catch { return null; }
+  if (!canvas.nodes) return null;
+
+  const nodeMap = new Map(canvas.nodes.map(n => [n.id, n]));
+  const lines: string[] = [];
+
+  for (const id of changedNodeIds) {
+    const node = nodeMap.get(id);
+    if (!node) continue;
+
+    // Content of the changed node, capped
+    const raw = node.type === "text" ? node.text
+      : node.type === "file" ? node.file
+      : node.type === "link" ? node.url
+      : node.label ?? "group";
+    const content = raw.length <= MAX_NODE_CONTENT
+      ? raw
+      : clipMiddle(raw, MAX_NODE_CONTENT);
+    lines.push(`[${node.type}] id=${id}: ${content}`);
+
+    // Find nearest neighbors (up to 4, within 500px)
+    const nearby = canvas.nodes
+      .filter(n => n.id !== id)
+      .map(n => ({ n, d: distance(node, n) }))
+      .filter(({ d }) => d < 500)
+      .sort((a, b) => a.d - b.d)
+      .slice(0, 4);
+
+    if (nearby.length > 0) {
+      lines.push("  nearby:");
+      for (const { n } of nearby) {
+        lines.push(`    ${n.type} id=${n.id} "${nodeSnippet(n)}"`);
+      }
+    }
+  }
+
+  return lines.length > 0 ? lines.join("\n") : null;
 }
 
 // --- Batch accumulator ---
@@ -266,13 +341,36 @@ async function processBatch(absPath: string) {
   log(`processing batch: ${batch.relPath} (${batch.diffs.length} events, mode=${triageMode})`);
   const anchor = batch.changedNodes?.[batch.changedNodes.length - 1];
 
+  // For live mode canvas files, build a richer diff with full node content + neighbors
+  if (triageMode === "live" && batch.fileType === "canvas" && batch.changedNodes.length > 0) {
+    const richDiff = buildTriageDiff(
+      batch.changedNodes.map(n => n.id),
+      absPath
+    );
+    if (richDiff) {
+      eventBatch.diffs = [`${batch.relPath}\n${richDiff}`];
+    }
+  }
+
   try {
     const triageStart = Date.now();
 
     if (triageMode === "live") {
-      const result = await triageLive(eventBatch, LIVE_MODEL);
-      const triageMs = Date.now() - triageStart;
-      await handleLiveResult(result, eventBatch, anchor, triageMs);
+      let ackText: string | undefined;
+      await triageLive(eventBatch, async (action) => {
+        const stats = getLastStats();
+        if (action.type === "acknowledge") {
+          ackText = action.text;
+          log(`live: acknowledge "${action.text}" (ttft=${stats.ttft}ms)`);
+          await writeResponse(eventBatch.filePath, eventBatch.fileType, action.text, anchor);
+        } else if (action.type === "delegate") {
+          log(`live: delegate (ttft=${stats.ttft}ms)`);
+          const parts = [action.summary];
+          if (ackText) parts.push(`[Triage agent wrote "${ackText}" to the file.]`);
+          parts.push(`[Triage: live, ttft=${stats.ttft}ms, session age=${Math.round(stats.sessionAge / 1000)}s]`);
+          await delegateToChannel(parts.join("\n"), eventBatch.relPath, eventBatch.fileType);
+        }
+      }, LIVE_MODEL);
     } else {
       const result = await triage(eventBatch, TRIAGE_MODEL);
       const triageMs = Date.now() - triageStart;
@@ -285,37 +383,6 @@ async function processBatch(absPath: string) {
 }
 
 // --- Handle triage decisions ---
-
-/** Handle live mode result — a list of actions (acknowledge, delegate) in order */
-async function handleLiveResult(
-  result: LiveTriageResult,
-  batch: EventBatch,
-  anchor: NodeGeometry | undefined,
-  triageMs: number
-) {
-  const stats = getLastStats();
-  log(`live triage: ${result.actions.length} actions (${triageMs}ms, ttft=${stats.ttft}ms)`);
-
-  if (result.actions.length === 0) {
-    log("live triage: no actions (ignored)");
-    return;
-  }
-
-  let ackText: string | undefined;
-
-  for (const action of result.actions) {
-    if (action.type === "acknowledge") {
-      ackText = action.text;
-      await writeResponse(batch.filePath, batch.fileType, action.text, anchor);
-    } else if (action.type === "delegate") {
-      const timingInfo = `[Triage: live, ttft=${stats.ttft}ms, e2e=${stats.e2e}ms, session age=${Math.round(stats.sessionAge / 1000)}s]`;
-      const parts = [action.summary];
-      if (ackText) parts.push(`[Triage agent already wrote "${ackText}" to the file.]`);
-      parts.push(timingInfo);
-      await delegateToChannel(parts.join("\n"), batch.relPath, batch.fileType);
-    }
-  }
-}
 
 /** Handle request mode result — single TriageResult from the HTTP API */
 async function handleRequestResult(

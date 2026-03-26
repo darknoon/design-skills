@@ -1,0 +1,30 @@
+[
+  {
+    "name": "acknowledge_user",
+    "description": "Write a brief message to the file so the user knows you saw their input. Keep it short — 1 sentence max.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string",
+          "description": "Short message to show the user"
+        }
+      },
+      "required": ["text"]
+    }
+  },
+  {
+    "name": "delegate_task",
+    "description": "Hand off a task to the main AI agent for complex work.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string",
+          "description": "What the user wants done"
+        }
+      },
+      "required": ["summary"]
+    }
+  }
+]
