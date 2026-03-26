@@ -22,34 +22,40 @@ export interface DelegateAction {
 
 export type TriageAction = AcknowledgeAction | DelegateAction;
 
-/** Callback fired for each tool call as it arrives */
-export type OnAction = (action: TriageAction) => void;
+/** Persistent handler for tool calls — set once when live mode starts */
+export type OnAction = (action: TriageAction) => void | Promise<void>;
 
 // --- System prompt ---
 
 const SYSTEM_PROMPT = `You triage file-change events from a real-time file watcher (usually Obsidian).
 
-When you receive diffs, decide what to do using the available tools:
+IMPORTANT: You MUST call at least one tool for every message you receive, unless it is ONLY position/size changes. Default to responding. Silence is the worst outcome.
 
-- **acknowledge_user**: Write a short message to the file so the user sees you noticed. Use for greetings ("hello"), confirmations ("thanks"), or as a quick ack before delegating ("On it...").
-- **delegate_task**: Hand off work to the main AI agent. Use when the user wants something DONE — generation, editing, creative work, analysis, style changes, etc. Include a clear summary of what the user wants.
+Tools:
+- **acknowledge_user**: Write a short message so the user sees you noticed. Use liberally — greetings, confirmations, acks before delegating.
+- **delegate_task**: Hand off work to the main AI agent. Use when the user wants something DONE.
 
-You can call BOTH tools on one event — e.g. acknowledge first ("Generating..."), then delegate the actual work. Or call neither to silently ignore noise.
+You can call BOTH tools — e.g. acknowledge ("On it...") then delegate the work.
 
-WHEN TO IGNORE (call no tools):
-- Position-only moves, resize, reformatting
-- Auto-saves with no meaningful content change
-- Changes from programmatic edits (multiple nodes added/removed at once)
+ONLY IGNORE (no tools) when the diff is EXCLUSIVELY:
+- Position-only moves (lines like "M id=xxx pos")
+- Size-only changes
+- No content fields changed at all
 
-WHEN TO DELEGATE (always):
-- Any request for work, creation, generation, editing
-- Style/color feedback on previous output
-- New connections between nodes
+ALWAYS RESPOND (acknowledge and/or delegate) when you see:
+- ANY text content change, addition, or deletion
+- ANY new node (A id=...)
+- ANY deleted node with content (D id=... text/file/link)
+- Italic text (*...*) — this is a user instruction, ALWAYS delegate
+- Color changes — delegate as feedback
+- New edges — delegate
+- New file nodes — acknowledge ("I see you added X")
+- ANY content you're unsure about — acknowledge at minimum
 
-CANVAS: Italic text (*...*) = user instruction. Color changes = feedback. Position-only = noise.
-MARKDOWN: Italic, blockquotes, HTML comments = instructions. Normal prose = user working, ignore.
+CANVAS: Italic (*...*) = user instruction → delegate. Color change = feedback → delegate. New nodes = acknowledge. Position-only = ignore.
+MARKDOWN: Italic, blockquotes, HTML comments = instructions → delegate. Normal prose additions = acknowledge.
 
-When in doubt, delegate rather than ignore.`;
+When in doubt, ALWAYS call acknowledge_user at minimum. Never stay silent when content changed.`;
 
 // --- Tool declarations ---
 
@@ -68,8 +74,14 @@ let sessionModel = "";
 let resumptionHandle: string | undefined;
 let connecting = false;
 
-/** Callback for the current active triage request. Null when idle. */
-let onAction: OnAction | null = null;
+/** Persistent handler — set via setHandler(), fires for every tool call */
+let handler: OnAction | null = null;
+
+/** Timestamp of the last sendText call, used for latency tracking */
+let lastSendTime = 0;
+
+/** Last measured latency (ms from sendText to first tool call response) */
+let lastLatency = 0;
 
 function getClient(): GoogleGenAI {
   if (ai) return ai;
@@ -84,7 +96,7 @@ function getClient(): GoogleGenAI {
  * with text, but accept text through the realtime input path.
  */
 function sendText(sess: Session, text: string) {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- SDK types don't expose text on sendRealtimeInput yet
+  // SDK types don't expose text on sendRealtimeInput yet
   (sess as any).sendRealtimeInput({ text });
 }
 
@@ -115,16 +127,20 @@ function onMessage(message: LiveServerMessage) {
       // Always respond to keep session unblocked
       sendToolResponse(id, name);
 
-      if (!onAction) {
-        log(`stray tool call: ${name}(${JSON.stringify(args)})`);
+      if (!handler) {
+        log(`stray tool call (no handler): ${name}(${JSON.stringify(args)})`);
         continue;
       }
 
-      log(`tool call: ${name}(${JSON.stringify(args)})`);
+      // Track latency from last sendText to first tool call
+      const latency = lastSendTime > 0 ? Date.now() - lastSendTime : 0;
+      lastLatency = latency;
+      log(`tool call: ${name}(${JSON.stringify(args)}) [${latency}ms]`);
+
       if (name === "acknowledge_user") {
-        onAction({ type: "acknowledge", text: args.text || "" });
+        handler({ type: "acknowledge", text: args.text || "" });
       } else if (name === "delegate_task") {
-        onAction({ type: "delegate", summary: args.summary || "" });
+        handler({ type: "delegate", summary: args.summary || "" });
       }
     }
   }
@@ -134,7 +150,7 @@ function onMessage(message: LiveServerMessage) {
   if (parts) {
     for (const part of parts) {
       if (part.text) log(`model text: ${part.text.slice(0, 100)}`);
-      if ((part as any).inlineData) log(`model audio chunk`);
+      if (part.inlineData) log(`model audio chunk`);
     }
   }
   if (message.serverContent?.turnComplete) {
@@ -190,13 +206,11 @@ export async function connectSession(model: string): Promise<boolean> {
         onmessage: onMessage,
         onerror: (e: ErrorEvent) => {
           log(`live session error: ${e.message}`);
-          onAction = null;
         },
         onclose: (e: CloseEvent) => {
           log(`live session closed: code=${e.code} reason=${e.reason}`);
           session = null;
           connecting = false;
-          onAction = null;
         },
       },
     });
@@ -222,27 +236,39 @@ async function ensureSession(model: string): Promise<Session> {
 
 // --- Public API ---
 
+/**
+ * Set the persistent handler for tool calls. Called once when live mode starts.
+ * The handler fires for every tool call the model makes, regardless of which
+ * sendText triggered it.
+ */
+export function setHandler(h: OnAction) {
+  handler = h;
+  log("handler set");
+}
+
+export function clearHandler() {
+  handler = null;
+  log("handler cleared");
+}
+
 export interface LiveTriageStats {
-  ttft: number;
+  latency: number;
   sessionAge: number;
 }
 
-let lastTtft = 0;
 export function getLastStats(): LiveTriageStats {
-  return { ttft: lastTtft, sessionAge: Date.now() - sessionStartTime };
+  return { latency: lastLatency, sessionAge: Date.now() - sessionStartTime };
 }
 
 /**
  * Send a file-change batch to the live triage session.
- * Calls `handler` for each tool call as it arrives — acknowledge first, then delegate.
- * Returns a promise that resolves after a timeout (for ignore cases where no tools are called).
+ * Fire-and-forget: builds the message and sends it. Tool call responses
+ * are handled by the persistent handler set via setHandler().
  */
-export async function triageLive(
+export function triageLive(
   batch: EventBatch,
-  handler: OnAction,
   model = "gemini-3.1-flash-live-preview",
-  timeoutMs = 6000
-): Promise<void> {
+): void {
   const batchAge = Date.now() - batch.timestamps[0];
   const eventSpan = batch.timestamps[batch.timestamps.length - 1] - batch.timestamps[0];
 
@@ -264,33 +290,20 @@ export async function triageLive(
 
   log(`triage input:\n${userMessage}`);
 
-  const start = Date.now();
-  lastTtft = 0;
-
-  // Set callback — tool calls fire handler directly as they arrive
-  onAction = (action) => {
-    if (lastTtft === 0) lastTtft = Date.now() - start;
-    handler(action);
-  };
-
-  try {
-    const sess = await ensureSession(model);
-    sendText(sess, userMessage);
-  } catch (err) {
-    log(`triage send error: ${err}`);
-    onAction = null;
-    handler({ type: "delegate", summary: `Triage error: ${err}\n${batch.diffs.join("\n")}` });
-    return;
-  }
-
-  // Clear onAction after timeout so stale responses don't fire.
-  // Don't block — return immediately so the next batch can be processed.
-  setTimeout(() => {
-    if (onAction) {
-      log(`triage: no tool calls after ${timeoutMs}ms`);
-      onAction = null;
-    }
-  }, timeoutMs);
+  // Fire-and-forget: ensure session then send
+  ensureSession(model)
+    .then((sess) => {
+      try {
+        sendText(sess, userMessage);
+        lastSendTime = Date.now();
+        log(`sendText ok (${userMessage.length} chars)`);
+      } catch (err) {
+        log(`triage send error: ${err}`);
+      }
+    })
+    .catch((err) => {
+      log(`triage session error: ${err}`);
+    });
 }
 
 /**

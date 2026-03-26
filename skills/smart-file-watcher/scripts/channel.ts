@@ -10,7 +10,7 @@ import { resolve, relative, basename, extname } from "path";
 import { FileWatcher, type ChangeEvent } from "./watcher";
 import type { CanvasNode, CanvasData } from "./canvas-types";
 import { triage, type EventBatch, type TriageResult, type NodeGeometry } from "./triage";
-import { triageLive, getLastStats, closeLiveSession, sendToSession, connectSession } from "./triage-live";
+import { triageLive, getLastStats, closeLiveSession, sendToSession, connectSession, setHandler, clearHandler } from "./triage-live";
 import {
   canvasAddNode,
   canvasUpdateNode,
@@ -38,7 +38,16 @@ const TRIAGE_MODEL = process.env.TRIAGE_MODEL || "gemini-3.1-flash-lite-preview"
 /** Model to use for live/realtime mode */
 const LIVE_MODEL = process.env.LIVE_MODEL || "gemini-3.1-flash-live-preview";
 /** Triage mode: "request" (per-event HTTP) or "live" (persistent WebSocket session) */
-let triageMode: "request" | "live" = (process.env.TRIAGE_MODE || "request") as any;
+let triageMode: "request" | "live" = (process.env.TRIAGE_MODE || "request") as "request" | "live";
+
+/** Latest anchor node geometry — updated on each live batch so the handler can position responses */
+let latestAnchor: NodeGeometry | undefined;
+/** Latest file path being triaged in live mode */
+let latestFilePath: string | undefined;
+/** Latest relative path being triaged in live mode */
+let latestRelPath: string | undefined;
+/** Latest file type being triaged in live mode */
+let latestFileType: "canvas" | "markdown" | "other" | undefined;
 
 // --- Canvas diffing (reused from file-watcher) ---
 
@@ -349,6 +358,8 @@ async function processBatch(absPath: string) {
     );
     if (richDiff) {
       eventBatch.diffs = [`${batch.relPath}\n${richDiff}`];
+    } else {
+      log(`buildTriageDiff returned null for ${absPath} (nodes: ${batch.changedNodes.map(n => n.id).join(",")})`);
     }
   }
 
@@ -356,21 +367,14 @@ async function processBatch(absPath: string) {
     const triageStart = Date.now();
 
     if (triageMode === "live") {
-      let ackText: string | undefined;
-      await triageLive(eventBatch, async (action) => {
-        const stats = getLastStats();
-        if (action.type === "acknowledge") {
-          ackText = action.text;
-          log(`live: acknowledge "${action.text}" (ttft=${stats.ttft}ms)`);
-          await writeResponse(eventBatch.filePath, eventBatch.fileType, action.text, anchor);
-        } else if (action.type === "delegate") {
-          log(`live: delegate (ttft=${stats.ttft}ms)`);
-          const parts = [action.summary];
-          if (ackText) parts.push(`[Triage agent wrote "${ackText}" to the file.]`);
-          parts.push(`[Triage: live, ttft=${stats.ttft}ms, session age=${Math.round(stats.sessionAge / 1000)}s]`);
-          await delegateToChannel(parts.join("\n"), eventBatch.relPath, eventBatch.fileType);
-        }
-      }, LIVE_MODEL);
+      // Update module-level state so the persistent handler knows where to write
+      latestAnchor = anchor;
+      latestFilePath = eventBatch.filePath;
+      latestRelPath = eventBatch.relPath;
+      latestFileType = eventBatch.fileType;
+
+      // Fire-and-forget — tool calls handled by persistent handler
+      triageLive(eventBatch, LIVE_MODEL);
     } else {
       const result = await triage(eventBatch, TRIAGE_MODEL);
       const triageMs = Date.now() - triageStart;
@@ -698,11 +702,37 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       const prev = triageMode;
       triageMode = mode;
       if (prev === "live" && mode === "request") {
+        clearHandler();
         closeLiveSession();
       }
-      // Eagerly connect when switching to live mode
+      // Eagerly connect and wire persistent handler when switching to live mode
       let connectStatus = "";
       if (mode === "live") {
+        // Set up persistent handler for all tool calls
+        let ackText: string | undefined;
+        setHandler(async (action) => {
+          const stats = getLastStats();
+          const fp = latestFilePath;
+          const ft = latestFileType;
+          if (!fp || !ft) {
+            log(`live handler: no file context, ignoring ${action.type}`);
+            return;
+          }
+          if (action.type === "acknowledge") {
+            ackText = action.text;
+            log(`live: acknowledge "${action.text}" (latency=${stats.latency}ms)`);
+            await writeResponse(fp, ft, action.text, latestAnchor);
+          } else if (action.type === "delegate") {
+            log(`live: delegate (latency=${stats.latency}ms)`);
+            const relPath = latestRelPath ?? fp;
+            const parts = [action.summary];
+            if (ackText) parts.push(`[Triage agent wrote "${ackText}" to the file.]`);
+            parts.push(`[Triage: live, latency=${stats.latency}ms, session age=${Math.round(stats.sessionAge / 1000)}s]`);
+            await delegateToChannel(parts.join("\n"), relPath, ft);
+            ackText = undefined; // Reset for next event
+          }
+        });
+
         const ok = await connectSession(LIVE_MODEL);
         connectStatus = ok ? " — session connected" : " — session failed to connect, will retry on first event";
       }
