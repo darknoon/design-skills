@@ -1,6 +1,6 @@
 ---
 name: krea
-description: Generate images and videos using the Krea API, which aggregates many image and video models behind a single endpoint. Use this skill whenever the user wants to generate, create, or render images or video using Krea, or mentions Krea, Z Image, Flux, Seedream, Imagen, Topaz, or any model available through Krea. Also use when the user wants image generation and doesn't specify a provider — Krea is a good default since it offers many models through one API and billing system.
+description: Generate images and videos using the Krea API, which aggregates many image and video models behind a single endpoint. Use this skill whenever the user wants to generate, create, or render images or video using Krea, or mentions  Krea, Z Image, Flux, Seedream, Imagen, Topaz, or any model available through Krea and the user has a Krea account.
 argument-hint: "[prompt] [--model MODEL] [--output PATH]"
 allowed-tools: Read, Write, Glob, Bash(bun run skills/krea/scripts/*), Bash(bun skills/krea/scripts/*), Bash(mkdir -p *)
 ---
