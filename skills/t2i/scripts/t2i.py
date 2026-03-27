@@ -5,6 +5,8 @@
 #   "openai",
 #   "google-genai",
 #   "python-dotenv",
+#   "fal-client",
+#   "httpx",
 # ]
 # ///
 """Text-to-image generation."""
@@ -21,6 +23,13 @@ load_dotenv(find_dotenv(usecwd=True))
 
 OPENAI_MODELS = {"gpt-image-1", "gpt-image-1.5", "gpt-image-1-mini"}
 GEMINI_MODELS = {"gemini-2.5-flash-image", "gemini-3.1-flash-image-preview"}
+FAL_MODELS = {
+    "flux-2-flex": "fal-ai/flux-2-flex",
+    "flux-2-pro": "fal-ai/flux-2-pro",
+    "flux-2-pro-edit": "fal-ai/flux-2-pro/edit",
+    "flux-1.1-pro": "fal-ai/flux-pro/v1.1",
+    "flux-1.1-ultra": "fal-ai/flux-pro/v1.1-ultra",
+}
 
 # Outer orchestrator model for OpenAI's Responses API (must be a text/chat model, not image)
 # The image_generation tool internally routes to the selected OPENAI_MODEL
@@ -175,39 +184,104 @@ def generate_gemini(
     sys.exit(1)
 
 
+def generate_fal(
+    prompt: str,
+    model: str,
+    size: str,
+    input_image: tuple[bytes, str] | None = None,
+) -> bytes:
+    import fal_client
+    import httpx
+
+    # SDK reads FAL_KEY; we standardize on FAL_API_KEY
+    if not os.environ.get("FAL_KEY") and os.environ.get("FAL_API_KEY"):
+        os.environ["FAL_KEY"] = os.environ["FAL_API_KEY"]
+    require_key("FAL_API_KEY", "fal.ai")
+
+    endpoint = FAL_MODELS[model]
+
+    # fal.ai accepts arbitrary WxH via a dict, or named presets
+    FAL_SIZE_PRESETS = {
+        "square_hd", "square", "portrait_4_3", "portrait_16_9",
+        "landscape_4_3", "landscape_16_9",
+    }
+    if size in FAL_SIZE_PRESETS:
+        image_size: dict | str = size
+    elif "x" in size:
+        w, h = (int(x) for x in size.split("x"))
+        image_size = {"width": w, "height": h}
+    else:
+        image_size = "square_hd"
+
+    arguments: dict = {
+        "prompt": prompt,
+        "image_size": image_size,
+        "output_format": "png",
+        "num_images": 1,
+    }
+
+    # For edit models, pass the input image as a data URI
+    if input_image and "edit" in model:
+        input_bytes, input_mime = input_image
+        data_uri = f"data:{input_mime};base64,{base64.b64encode(input_bytes).decode()}"
+        arguments["image_url"] = data_uri
+
+    result = fal_client.subscribe(endpoint, arguments=arguments)
+
+    images = result.get("images", [])
+    if not images:
+        print("No image returned by fal.ai.")
+        print(f"Response: {result}")
+        sys.exit(1)
+
+    image_url = images[0]["url"]
+    response = httpx.get(image_url)
+    response.raise_for_status()
+    return response.content
+
+
 # --- Main ---
 
 
 def main():
+    all_models = sorted(OPENAI_MODELS | GEMINI_MODELS | set(FAL_MODELS.keys()))
+
     parser = argparse.ArgumentParser(
-        description="Generate an icon image from a text prompt.",
+        description="Generate an image from a text prompt.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 models:
   gpt-image-1-mini        (default) fast, transparent background
   gpt-image-1             higher quality OpenAI
-  gemini-2.5-flash-image  good for all icons, best at Android style
+  gpt-image-1.5           latest OpenAI
+  gemini-2.5-flash-image  good all-around, great for Android style
   gemini-3.1-flash-image-preview  needs explicit style description
+  flux-2-flex             FLUX.2 Flex via fal.ai — fast, high quality
+  flux-2-pro              FLUX.2 Pro via fal.ai — best quality
+  flux-2-pro-edit         FLUX.2 Pro image editing via fal.ai
+  flux-1.1-pro            FLUX 1.1 Pro via fal.ai
+  flux-1.1-ultra          FLUX 1.1 Ultra via fal.ai
 
 examples:
-  uv run t2i.py "water bottle icon, outline, simple"
+  uv run t2i.py "a sunset over mountains" --output sunset.png
   uv run t2i.py "search icon" --model gemini-2.5-flash-image
+  uv run t2i.py "a cat in a garden" --model flux-2-flex --output cat.png
   uv run t2i.py "home icon" --output icons/home.png --size 512x512
-  uv run t2i.py "walking dog icon" --reference icons/search.svg icons/home.svg
-  uv run t2i.py "clean up the shape" --input-image iteration-01/icon.png
-  uv run t2i.py "simplify, match this style" --input-image iter-01/icon.png --reference refs/style-a.png refs/style-b.png
-  uv run t2i.py "icon" --orchestrator gpt-5.2
+  uv run t2i.py "walking dog" --reference refs/style-a.png refs/style-b.png
+  uv run t2i.py "clean up the shape" --input-image draft.png
+  uv run t2i.py "refine this" --input-image draft.png --model flux-2-pro-edit
 
 api keys (env or .env file):
   OPENAI_API_KEY   for gpt-image-* models
   GOOGLE_API_KEY   for gemini-* models
+  FAL_API_KEY      for flux-* models (fal.ai)
 """,
     )
     parser.add_argument("prompt", help="Image generation prompt")
     parser.add_argument("--model", default="gpt-image-1-mini")
     parser.add_argument("--output", default=None)
     parser.add_argument("--size", default="1024x1024",
-                        help="OpenAI: WxH e.g. 512x512. Gemini: 512px | 1K | 2K | 4K (ignored if not a valid Gemini size)")
+                        help="OpenAI: WxH e.g. 512x512. Gemini: 512px | 1K | 2K | 4K. Fal: WxH mapped to presets")
     parser.add_argument(
         "--aspect-ratio",
         default="1:1",
@@ -222,18 +296,18 @@ api keys (env or .env file):
         "--input-image",
         metavar="PATH",
         default=None,
-        help="Source image to edit (PNG, JPG, WebP, SVG). Separate from style references.",
+        help="Source image to edit (PNG, JPG, WebP). Separate from style references.",
     )
     parser.add_argument(
         "--reference",
         nargs="+",
         metavar="PATH",
         default=[],
-        help="Style reference images (PNG, JPG, WebP, SVG). SVGs are rendered via Playwright.",
+        help="Style reference images (PNG, JPG, WebP).",
     )
     args = parser.parse_args()
 
-    out = Path(args.output) if args.output else Path("icon.png")
+    out = Path(args.output) if args.output else Path("image.png")
     input_image = load_references([args.input_image])[0] if args.input_image else None
     references = load_references(args.reference) if args.reference else []
 
@@ -245,9 +319,13 @@ api keys (env or .env file):
         image_bytes = generate_gemini(
             args.prompt, args.model, args.size, args.aspect_ratio, references, input_image
         )
+    elif args.model in FAL_MODELS:
+        if references:
+            print("Note: fal.ai models don't support --reference images (ignored).")
+        image_bytes = generate_fal(args.prompt, args.model, args.size, input_image)
     else:
         print(
-            f"Unknown model '{args.model}'. Choose from: {', '.join(OPENAI_MODELS | GEMINI_MODELS)}"
+            f"Unknown model '{args.model}'. Choose from: {', '.join(all_models)}"
         )
         sys.exit(1)
 
