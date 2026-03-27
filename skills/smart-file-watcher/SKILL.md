@@ -1,6 +1,6 @@
 ---
 name: smart-file-watcher
-description: Watch files with an LLM triage layer. Supports two modes — a per-request HTTP mode (Gemini Flash Lite) and a persistent WebSocket mode (Gemini Live) for lower latency. The triage agent handles immediate responses (acknowledgments) autonomously in-file and delegates complex work to the main model. Supports canvas and markdown files.
+description: Watch files or directories with an LLM triage layer. Supports two modes — a per-request HTTP mode (Gemini Flash Lite) and a persistent WebSocket mode (Gemini Live) for lower latency. The triage agent handles immediate responses (acknowledgments) autonomously in-file and delegates complex work to the main model. Supports canvas and markdown files. Directory watches detect file additions, deletions, and modifications.
 ---
 
 # Smart File Watcher
@@ -94,9 +94,9 @@ claude --dangerously-load-development-channels server:smart-file-watcher
 
 | Tool | Description |
 |------|-------------|
-| `watch` | Start smart-watching a file. Changes are triaged by the LLM. |
-| `unwatch` | Stop watching a file. |
-| `list_watched` | List all currently watched files. |
+| `watch` | Start smart-watching a file or directory. Changes are triaged by the LLM. Directories detect file additions, deletions, and modifications. |
+| `unwatch` | Stop watching a file or directory. |
+| `list_watched` | List all currently watched paths. |
 | `ping` | Test if channel notifications are active. |
 | `get_changes` | Poll for buffered delegated events (fallback when channels aren't active). |
 | `set_settle_time` | Adjust the settle window (100-5000ms). Lower = faster response, higher = better batching. Default: 800ms. |

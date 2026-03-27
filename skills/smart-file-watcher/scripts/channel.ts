@@ -508,11 +508,11 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
     {
       name: "watch",
       description:
-        "Start smart-watching a file. Changes are triaged by a lightweight LLM. Simple responses are handled automatically; complex tasks are delegated to you.",
+        "Start smart-watching a file or directory. Changes are triaged by a lightweight LLM. Simple responses are handled automatically; complex tasks are delegated to you. For directories, detects file additions, deletions, and modifications.",
       inputSchema: {
         type: "object" as const,
         properties: {
-          path: { type: "string", description: "Path to the file to watch" },
+          path: { type: "string", description: "Path to a file or directory to watch" },
         },
         required: ["path"],
       },

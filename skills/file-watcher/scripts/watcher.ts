@@ -1,5 +1,5 @@
-import { watch, existsSync, readFileSync, statSync, appendFileSync } from "fs";
-import { resolve, relative, dirname, basename } from "path";
+import { watch, existsSync, readFileSync, readdirSync, statSync, appendFileSync } from "fs";
+import { resolve, relative, dirname, basename, join } from "path";
 
 const LOG = "/tmp/file-watcher.log";
 function log(msg: string) {
@@ -149,6 +149,8 @@ export class FileWatcher {
   private state = new Map<string, FileState>();
   private timers = new Map<string, Timer>();
   private watchers = new Map<string, ReturnType<typeof watch>>();
+  /** For directory watches: tracked set of filenames */
+  private dirFiles = new Map<string, Set<string>>();
   private cwd: string;
   private threshold: number;
   private onChange: ChangeHandler;
@@ -172,11 +174,26 @@ export class FileWatcher {
       return { ok: false, error: `Already watching ${abs}` };
     }
 
+    if (!existsSync(abs)) {
+      // For files that don't exist yet, watch the parent directory
+      const dir = dirname(abs);
+      if (!existsSync(dir)) {
+        return { ok: false, error: `Parent directory does not exist: ${dir}` };
+      }
+      return this.watchFile(abs);
+    }
+
+    const st = statSync(abs);
+    if (st.isDirectory()) {
+      return this.watchDir(abs);
+    }
+
+    return this.watchFile(abs);
+  }
+
+  private watchFile(abs: string): { ok: boolean; error?: string } {
     const dir = dirname(abs);
     const target = basename(abs);
-    if (!existsSync(dir)) {
-      return { ok: false, error: `Parent directory does not exist: ${dir}` };
-    }
 
     this.state.set(abs, snapshot(abs));
 
@@ -195,6 +212,85 @@ export class FileWatcher {
     return { ok: true };
   }
 
+  private watchDir(abs: string): { ok: boolean; error?: string } {
+    // Snapshot all existing files
+    const files = this.listFiles(abs);
+    this.dirFiles.set(abs, files);
+    for (const name of files) {
+      const fp = join(abs, name);
+      this.state.set(fp, snapshot(fp));
+    }
+
+    const dirWatcher = watch(abs, (_event, filename) => {
+      if (!filename || filename.startsWith(".")) return;
+      this.debouncedDirScan(abs);
+    });
+    this.watchers.set(abs, dirWatcher);
+
+    log(`watching directory: ${abs} (${files.size} files)`);
+    return { ok: true };
+  }
+
+  /** List non-hidden files in a directory (non-recursive) */
+  private listFiles(dirPath: string): Set<string> {
+    try {
+      return new Set(
+        readdirSync(dirPath).filter(
+          (f) => !f.startsWith(".") && statSync(join(dirPath, f)).isFile()
+        )
+      );
+    } catch {
+      return new Set();
+    }
+  }
+
+  private debouncedDirScan(dirPath: string) {
+    const key = `dir:${dirPath}`;
+    const existing = this.timers.get(key);
+    if (existing) clearTimeout(existing);
+    this.timers.set(
+      key,
+      setTimeout(() => {
+        this.timers.delete(key);
+        this.handleDirScan(dirPath);
+      }, this.debounceMs)
+    );
+  }
+
+  private handleDirScan(dirPath: string) {
+    const prev = this.dirFiles.get(dirPath);
+    if (!prev) return;
+
+    const curr = this.listFiles(dirPath);
+    this.dirFiles.set(dirPath, curr);
+
+    // Detect added files
+    for (const name of curr) {
+      const fp = join(dirPath, name);
+      if (!prev.has(name)) {
+        log(`dir scan: ADDED ${fp}`);
+        const fileState = snapshot(fp);
+        this.state.set(fp, fileState);
+        const empty: FileState = { exists: false, content: null, size: 0, isBinary: false };
+        const { location, detail } = computeDetail(empty, fileState, this.threshold, "A");
+        this.onChange({ type: "A", filePath: fp, relPath: this.relPath(fp), location, detail });
+      } else {
+        // Check for modifications
+        this.handleChange(fp);
+      }
+    }
+
+    // Detect deleted files
+    for (const name of prev) {
+      if (!curr.has(name)) {
+        const fp = join(dirPath, name);
+        log(`dir scan: DELETED ${fp}`);
+        this.state.delete(fp);
+        this.onChange({ type: "D", filePath: fp, relPath: this.relPath(fp), location: "", detail: "" });
+      }
+    }
+  }
+
   unwatch(filePath: string): { ok: boolean; error?: string } {
     const abs = resolve(filePath);
     const watcher = this.watchers.get(abs);
@@ -203,11 +299,27 @@ export class FileWatcher {
     }
     watcher.close();
     this.watchers.delete(abs);
-    this.state.delete(abs);
+
+    // Clean up directory state if applicable
+    const dirFileSet = this.dirFiles.get(abs);
+    if (dirFileSet) {
+      for (const name of dirFileSet) {
+        this.state.delete(join(abs, name));
+      }
+      this.dirFiles.delete(abs);
+    } else {
+      this.state.delete(abs);
+    }
+
     const timer = this.timers.get(abs);
     if (timer) {
       clearTimeout(timer);
       this.timers.delete(abs);
+    }
+    const dirTimer = this.timers.get(`dir:${abs}`);
+    if (dirTimer) {
+      clearTimeout(dirTimer);
+      this.timers.delete(`dir:${abs}`);
     }
     return { ok: true };
   }
@@ -222,6 +334,7 @@ export class FileWatcher {
     this.watchers.clear();
     this.state.clear();
     this.timers.clear();
+    this.dirFiles.clear();
   }
 
   private debouncedChange(filePath: string) {

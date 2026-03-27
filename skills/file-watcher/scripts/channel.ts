@@ -191,7 +191,7 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
     {
       name: "watch",
-      description: "Start watching a file for changes. Accepts absolute or relative paths. Files that don't exist yet will be watched for creation.",
+      description: "Start watching a file or directory for changes. Accepts absolute or relative paths. Files that don't exist yet will be watched for creation. Directories are watched for file additions, modifications, and deletions.",
       inputSchema: {
         type: "object" as const,
         properties: {

@@ -5,7 +5,7 @@ description: Watch files for changes and react to modifications in real time. Us
 
 # File Watcher
 
-Watches files for changes using OS-native events (fsevents on macOS, inotify on Linux) and reports structured diffs. Two entrypoints:
+Watches files and directories for changes using OS-native events (fsevents on macOS, inotify on Linux) and reports structured diffs. Supports both individual files and directories (non-recursive: tracks file additions, modifications, and deletions within the directory). Two entrypoints:
 
 - **Channel server** (`channel.ts`) — an MCP server that exposes `watch`, `unwatch`, and `list_watched` tools so files can be added/removed dynamically at runtime. When launched with channel support, it pushes change events directly into the session. Without channel support, agents can poll via `get_changes`.
 - **CLI script** (`watch.ts`) — emits one status line per change to stdout. Useful for agents that don't support channels, or for piping into other tools.
@@ -37,7 +37,7 @@ claude --dangerously-load-development-channels server:file-watcher
 
 | Tool | Description |
 |------|-------------|
-| `watch` | Start watching a file (absolute or relative path). Files that don't exist yet are watched for creation. |
+| `watch` | Start watching a file or directory (absolute or relative path). Files that don't exist yet are watched for creation. Directories are watched for file additions, modifications, and deletions (non-recursive, non-hidden files only). |
 | `unwatch` | Stop watching a file. |
 | `list_watched` | List all currently watched files. |
 | `ping` | Test if channel notifications are active. Sends a pong via the channel. If you see a `<channel type="pong">` tag alongside the tool result, changes will be pushed automatically. If not, use `get_changes` to poll. |
@@ -71,7 +71,7 @@ For other files, the body contains an inline diff if small, or a summary like `+
 ## CLI Script
 
 ```bash
-bun run skills/file-watcher/scripts/watch.ts [--threshold N] <file1> [file2] ...
+bun run skills/file-watcher/scripts/watch.ts [--threshold N] <file-or-dir1> [file-or-dir2] ...
 ```
 
 Emits one line per event to stdout:
