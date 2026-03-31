@@ -49,6 +49,7 @@ Dependencies are managed by `uv` — no manual install needed. Just run the comm
 - `--reference PATH [PATH ...]` — style reference images (PNG, JPG, WebP). OpenAI and Gemini only.
 - `--input-image PATH` — image to edit instead of generating from scratch
 - `--orchestrator MODEL` — OpenAI orchestrator model (default: `gpt-4o`)
+- `--partial N` — Stream N partial images during generation (0-3, OpenAI only). Each partial overwrites the output file and prints `Progress 1/N <path>` to stdout. Read the image at that path to show the user incremental progress.
 
 ## Sizes by provider
 

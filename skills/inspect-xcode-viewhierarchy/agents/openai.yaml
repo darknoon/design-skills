@@ -1,0 +1,4 @@
+interface:
+  display_name: "Xcode View Hierarchy Inspector"
+  short_description: "Parse Xcode .viewhierarchy exports"
+  default_prompt: "Use $inspect-xcode-viewhierarchy to inspect an exported Xcode .viewhierarchy bundle and identify the first layer where layout goes wrong."

@@ -2,7 +2,8 @@ import { GoogleGenAI, Modality, type LiveServerMessage, type Session } from "@go
 import { appendFileSync } from "fs";
 import type { EventBatch } from "./triage";
 
-const LOG = "/tmp/smart-file-watcher.log";
+const HOME = process.env.HOME || "/tmp";
+const LOG = `${HOME}/.prefix/logs/smart-file-watcher.log`;
 function log(msg: string) {
   const ts = new Date().toISOString();
   appendFileSync(LOG, `[${ts}] [triage-live] ${msg}\n`);

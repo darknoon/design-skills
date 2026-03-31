@@ -1,7 +1,8 @@
 import { watch, existsSync, readFileSync, readdirSync, statSync, appendFileSync } from "fs";
 import { resolve, relative, dirname, basename, join } from "path";
 
-const LOG = "/tmp/file-watcher.log";
+const HOME = process.env.HOME || "/tmp";
+const LOG = `${HOME}/.prefix/logs/file-watcher.log`;
 function log(msg: string) {
   const ts = new Date().toISOString();
   appendFileSync(LOG, `[${ts}] [watcher] ${msg}\n`);

@@ -10,7 +10,8 @@ import { resolve } from "path";
 import { FileWatcher, type ChangeEvent } from "./watcher.js";
 import type { CanvasNode, CanvasData } from "./canvas-types.js";
 
-const LOG = "/tmp/file-watcher.log";
+const HOME = process.env.HOME || "/tmp";
+const LOG = `${HOME}/.prefix/logs/file-watcher.log`;
 function log(msg: string) {
   const ts = new Date().toISOString();
   appendFileSync(LOG, `[${ts}] ${msg}\n`);

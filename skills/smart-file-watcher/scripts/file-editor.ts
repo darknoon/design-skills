@@ -2,7 +2,8 @@ import { appendFileSync } from "fs";
 import type { CanvasData } from "./canvas-types";
 import type { NodeGeometry } from "./triage";
 
-const LOG = "/tmp/smart-file-watcher.log";
+const HOME = process.env.HOME || "/tmp";
+const LOG = `${HOME}/.prefix/logs/smart-file-watcher.log`;
 function log(msg: string) {
   const ts = new Date().toISOString();
   appendFileSync(LOG, `[${ts}] [editor] ${msg}\n`);

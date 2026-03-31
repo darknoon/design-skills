@@ -33,7 +33,7 @@ FAL_MODELS = {
 
 # Outer orchestrator model for OpenAI's Responses API (must be a text/chat model, not image)
 # The image_generation tool internally routes to the selected OPENAI_MODEL
-OPENAI_ORCHESTRATOR = "gpt-4o"
+OPENAI_ORCHESTRATOR = "gpt-4o-mini"
 MIME_BY_EXT = {
     "jpg": "image/jpeg",
     "jpeg": "image/jpeg",
@@ -72,6 +72,15 @@ def load_references(paths: list[str]) -> list[tuple[bytes, str]]:
 # --- Generation ---
 
 
+def emit_partial(path: str, index: int, total: int) -> None:
+    """Emit a standardized progress line for the calling agent to parse and show the user.
+
+    Format: Progress <index>/<total> <path>
+    The agent can read the image at <path> to show incremental progress.
+    """
+    print(f"Progress {index}/{total} {path}")
+
+
 def generate_openai(
     prompt: str,
     model: str,
@@ -79,6 +88,9 @@ def generate_openai(
     references: list[tuple[bytes, str]],
     input_image: tuple[bytes, str] | None = None,
     orchestrator: str = OPENAI_ORCHESTRATOR,
+    partial: int = 0,
+    output_dir: Path | None = None,
+    output_name: str = "image.png",
 ) -> bytes:
     from openai import OpenAI
 
@@ -92,12 +104,13 @@ def generate_openai(
             + prompt
         )
     elif input_image:
-        text = "I'm attaching an image to edit. Edit it with this description: " + prompt
+        text = (
+            "I'm attaching an image to edit. Edit it with this description: " + prompt
+        )
     elif references:
         text = (
             "I'm attaching reference images that show the target visual style. "
-            "Generate a NEW image matching that style with this description: "
-            + prompt
+            "Generate a NEW image matching that style with this description: " + prompt
         )
     else:
         text = prompt
@@ -105,39 +118,79 @@ def generate_openai(
     content: list[dict] = [{"type": "input_text", "text": text}]
     if input_image:
         input_bytes, input_mime = input_image
-        content.append({
-            "type": "input_image",
-            "image_url": f"data:{input_mime};base64,{base64.b64encode(input_bytes).decode()}",
-        })
-    for ref_bytes, mime_type in references:
-        content.append({
-            "type": "input_image",
-            "image_url": f"data:{mime_type};base64,{base64.b64encode(ref_bytes).decode()}",
-        })
-
-    response = client.responses.create(
-        model=orchestrator,
-        input=[{"role": "user", "content": content}],
-        tools=[
+        content.append(
             {
-                "type": "image_generation",
-                "model": model,
-                "size": size,
-                "quality": "low",
-                "output_format": "png",
-                "background": "transparent",
+                "type": "input_image",
+                "image_url": f"data:{input_mime};base64,{base64.b64encode(input_bytes).decode()}",
             }
-        ],
-        tool_choice="required",
-    )
-    for output in response.output:
-        if output.type == "image_generation_call":
-            return base64.b64decode(output.result)
+        )
+    for ref_bytes, mime_type in references:
+        content.append(
+            {
+                "type": "input_image",
+                "image_url": f"data:{mime_type};base64,{base64.b64encode(ref_bytes).decode()}",
+            }
+        )
 
-    print("No image returned by OpenAI. Model output:")
-    for output in response.output:
-        print(f"  type={output.type}: {output}")
-    sys.exit(1)
+    tool_config: dict = {
+        "type": "image_generation",
+        "model": model,
+        "size": size,
+        "quality": "low",
+        "output_format": "png",
+        "background": "transparent",
+    }
+    if partial > 0:
+        tool_config["partial_images"] = min(partial, 3)
+
+    if partial > 0:
+        # Streaming mode — write partial images to the output path as they arrive,
+        # so the agent/user can see progress by watching the file
+        stream = client.responses.create(
+            model=orchestrator,
+            input=[{"role": "user", "content": content}],
+            tools=[tool_config],
+            tool_choice="required",
+            stream=True,
+        )
+        final_bytes: bytes | None = None
+        partial_count = 0
+        partial_total = min(partial, 3)
+        for event in stream:
+            if event.type == "response.image_generation_call.partial_image":
+                partial_count += 1
+                if output_dir:
+                    img_bytes = base64.b64decode(event.partial_image_b64)
+                    output_path = output_dir / output_name
+                    output_path.write_bytes(img_bytes)
+                    emit_partial(str(output_path), partial_count, partial_total)
+            elif event.type == "response.completed":
+                # Final image is in the completed response output
+                for out in event.response.output:
+                    if out.type == "image_generation_call":
+                        final_bytes = base64.b64decode(out.result)
+
+        if final_bytes:
+            return final_bytes
+
+        print("No image returned by OpenAI (streaming mode).")
+        sys.exit(1)
+    else:
+        # Non-streaming mode
+        response = client.responses.create(
+            model=orchestrator,
+            input=[{"role": "user", "content": content}],
+            tools=[tool_config],
+            tool_choice="required",
+        )
+        for output in response.output:
+            if output.type == "image_generation_call":
+                return base64.b64decode(output.result)
+
+        print("No image returned by OpenAI. Model output:")
+        for output in response.output:
+            print(f"  type={output.type}: {output}")
+        sys.exit(1)
 
 
 def generate_gemini(
@@ -202,8 +255,12 @@ def generate_fal(
 
     # fal.ai accepts arbitrary WxH via a dict, or named presets
     FAL_SIZE_PRESETS = {
-        "square_hd", "square", "portrait_4_3", "portrait_16_9",
-        "landscape_4_3", "landscape_16_9",
+        "square_hd",
+        "square",
+        "portrait_4_3",
+        "portrait_16_9",
+        "landscape_4_3",
+        "landscape_16_9",
     }
     if size in FAL_SIZE_PRESETS:
         image_size: dict | str = size
@@ -280,8 +337,11 @@ api keys (env or .env file):
     parser.add_argument("prompt", help="Image generation prompt")
     parser.add_argument("--model", default="gpt-image-1-mini")
     parser.add_argument("--output", default=None)
-    parser.add_argument("--size", default="1024x1024",
-                        help="OpenAI: WxH e.g. 512x512. Gemini: 512px | 1K | 2K | 4K. Fal: WxH mapped to presets")
+    parser.add_argument(
+        "--size",
+        default="1024x1024",
+        help="OpenAI: WxH e.g. 512x512. Gemini: 512px | 1K | 2K | 4K. Fal: WxH mapped to presets",
+    )
     parser.add_argument(
         "--aspect-ratio",
         default="1:1",
@@ -305,6 +365,14 @@ api keys (env or .env file):
         default=[],
         help="Style reference images (PNG, JPG, WebP).",
     )
+    parser.add_argument(
+        "--partial",
+        type=int,
+        default=0,
+        metavar="N",
+        help="Stream N partial images during generation (0-3, OpenAI only). "
+        "Each partial overwrites the output file and prints 'Progress 1/N <path>' to stdout.",
+    )
     args = parser.parse_args()
 
     out = Path(args.output) if args.output else Path("image.png")
@@ -312,21 +380,37 @@ api keys (env or .env file):
     references = load_references(args.reference) if args.reference else []
 
     if args.model in OPENAI_MODELS:
+        out.parent.mkdir(parents=True, exist_ok=True)
         image_bytes = generate_openai(
-            args.prompt, args.model, args.size, references, input_image, args.orchestrator
+            args.prompt,
+            args.model,
+            args.size,
+            references,
+            input_image,
+            args.orchestrator,
+            partial=args.partial,
+            output_dir=out.parent,
+            output_name=out.name,
         )
     elif args.model in GEMINI_MODELS:
+        if args.partial > 0:
+            print("Note: --partial is only supported for OpenAI models (ignored).")
         image_bytes = generate_gemini(
-            args.prompt, args.model, args.size, args.aspect_ratio, references, input_image
+            args.prompt,
+            args.model,
+            args.size,
+            args.aspect_ratio,
+            references,
+            input_image,
         )
     elif args.model in FAL_MODELS:
         if references:
             print("Note: fal.ai models don't support --reference images (ignored).")
+        if args.partial > 0:
+            print("Note: --partial is only supported for OpenAI models (ignored).")
         image_bytes = generate_fal(args.prompt, args.model, args.size, input_image)
     else:
-        print(
-            f"Unknown model '{args.model}'. Choose from: {', '.join(all_models)}"
-        )
+        print(f"Unknown model '{args.model}'. Choose from: {', '.join(all_models)}")
         sys.exit(1)
 
     out.parent.mkdir(parents=True, exist_ok=True)
