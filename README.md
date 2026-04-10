@@ -14,6 +14,10 @@ Claude Code skills for design and development workflows.
 | **[svg2img](skills/svg2img/)** | Render SVG files to PNG using Playwright. Batch support, configurable size. |
 | **[t2i](skills/t2i/)** | Text-to-image generation using Gemini or OpenAI models. Supports reference images, input editing, and multiple models. |
 
+## Related
+
+Audio processing skills (transcription, diarization, etc.) live in [darknoon/audio-skills](https://github.com/darknoon/audio-skills).
+
 ## Setup
 
 Some skills require API keys for image generation and vectorization. See each skill's SKILL.md for details. I recommend putting them in a password manager like 1Password, then using its CLI to inject.
