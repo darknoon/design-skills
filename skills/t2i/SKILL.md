@@ -1,6 +1,6 @@
 ---
 name: t2i
-description: Generate images from a text prompt using AI image models (GPT Image, Gemini Image, FLUX). Use when asked to generate, create, or render an image — photos, illustrations, icons, textures, mockups, anything visual. Models include gpt-image-1, gpt-image-1-mini, gpt-image-1.5, gemini-2.5-flash-image, gemini-3.1-flash-image-preview, flux-2-flex, flux-2-pro, flux-2-pro-edit, flux-1.1-pro, flux-1.1-ultra. Supports reference images for style and character consistency, and input images for editing.
+description: Generate images from a text prompt using AI image models (GPT Image, Gemini Image, FLUX). Use when asked to generate, create, or render an image — photos, illustrations, icons, textures, mockups, anything visual. Models include gpt-image-1, gpt-image-1-mini, gpt-image-1.5, gpt-image-2, gemini-2.5-flash-image, gemini-3.1-flash-image-preview, flux-2-flex, flux-2-pro, flux-2-pro-edit, flux-1.1-pro, flux-1.1-ultra. Supports reference images for style and character consistency, and input images for editing.
 argument-hint: "[prompt] [--model MODEL] [--output PATH]"
 allowed-tools: Read, Write, Glob, Bash(uv run skills/t2i/scripts/t2i.py *), Bash(mkdir -p *)
 ---
@@ -20,22 +20,33 @@ The script reads API keys from `.env` (at the repo root) automatically via `pyth
 ## Basic usage
 
 ```bash
-uv run skills/t2i/scripts/t2i.py "<prompt>" --output <path>
+uv run skills/t2i/scripts/t2i.py "A dog" --output dog.png
 ```
 
 Dependencies are managed by `uv` — no manual install needed. Just run the command.
+
+## How your prompt reaches the model
+
+The script **does not template your prompt**, so if you pass `--input-image` or `--reference`, you must describe in the prompt itself what should happen with them (e.g. "edit this image to...", "match the style of the attached references"). Without that, the model has no context for why images are attached.
+
+Provider-specific details:
+
+- **Gemini** — prompt is sent directly to the image model, verbatim. Parts are ordered `[input_image?, ...references, prompt_text]` (images before text).
+- **OpenAI** — the script uses an orchestrator model (default `gpt-4o-mini`) that invokes the `image_generation` tool.
+- **Fal (FLUX)** — prompt is sent directly. `--reference` is not supported.
 
 ## Models
 
 | Model | Flag | Notes |
 |---|---|---|
-| `gpt-image-1-mini` | (default) | Fast, transparent background, good for icons |
-| `gpt-image-1` | `--model gpt-image-1` | Higher quality OpenAI |
-| `gpt-image-1.5` | `--model gpt-image-1.5` | Latest OpenAI |
+| `gpt-image-1-mini` | (default) | Fast, good for icons. Supports `--background transparent`. |
+| `gpt-image-2` | `--model gpt-image-2` | Best model for realistic images, opaque only. |
+| `gpt-image-1` | `--model gpt-image-1` | Higher quality OpenAI model, best at ui icons. Supports `--background transparent`. |
+| `gpt-image-1.5` | `--model gpt-image-1.5` | High quality model, supports `--background transparent`. |
+| `gemini-3.1-flash-image-preview` | `--model gemini-3.1-flash-image-preview` | Great image editing model, ok at design |
 | `gemini-2.5-flash-image` | `--model gemini-2.5-flash-image` | Good all-around, great for Android-style |
-| `gemini-3.1-flash-image-preview` | `--model gemini-3.1-flash-image-preview` | Needs more explicit style description |
-| `flux-2-flex` | `--model flux-2-flex` | FLUX.2 Flex via fal.ai — fast, high quality |
-| `flux-2-pro` | `--model flux-2-pro` | FLUX.2 Pro via fal.ai — best quality |
+| `flux-2-flex` | `--model flux-2-flex` | FLUX.2 Flex via fal.ai — fast, decent quality |
+| `flux-2-pro` | `--model flux-2-pro` | FLUX.2 Pro via fal.ai — good quality for image gen, not icons or design |
 | `flux-2-pro-edit` | `--model flux-2-pro-edit` | FLUX.2 Pro image editing via fal.ai |
 | `flux-1.1-pro` | `--model flux-1.1-pro` | FLUX 1.1 Pro via fal.ai |
 | `flux-1.1-ultra` | `--model flux-1.1-ultra` | FLUX 1.1 Ultra via fal.ai |
@@ -48,6 +59,8 @@ Dependencies are managed by `uv` — no manual install needed. Just run the comm
 - `--aspect-ratio R` — Gemini only: `1:1` (default), `9:16`, `16:9`, `4:3`, `3:4`
 - `--reference PATH [PATH ...]` — style reference images (PNG, JPG, WebP). OpenAI and Gemini only.
 - `--input-image PATH` — image to edit instead of generating from scratch
+- `--background {auto,transparent,opaque}` — OpenAI only. Default `auto` (model picks; works with all models). Pass `transparent` if you need transparency for icons/logos — **only supported by `gpt-image-1.x` models** (`gpt-image-1-mini`, `gpt-image-1`, `gpt-image-1.5`). `gpt-image-2` and later will error on `transparent`.
+- `--quality {auto,low,medium,high}` — OpenAI only. Default `auto` (model picks). Pass `low` for cheap iteration; pass `high` for evals/finals when quality matters. Cost scales sharply with quality (see cost table below).
 - `--orchestrator MODEL` — OpenAI orchestrator model (default: `gpt-4o`)
 - `--partial N` — Stream N partial images during generation (0-3, OpenAI only). Each partial overwrites the output file and prints `Progress 1/N <path>` to stdout. Read the image at that path to show the user incremental progress.
 
@@ -69,7 +82,7 @@ Dependencies are managed by `uv` — no manual install needed. Just run the comm
 
 **Always pass relevant reference images when you have them.** References dramatically improve consistency — for style, character identity, color palette, composition, everything. More references = better results. If you have images of specific characters, objects, or styles that should appear in the output, pass them all via `--reference`. Don't hold back — the models handle many references well.
 
-Works with PNG, JPG, and WebP. SVGs need to be rasterized to PNG first (e.g. with the svg2img skill).
+Works with PNG, JPG, and WebP. SVGs need to be rasterized to PNG first.
 
 Common cases where references help:
 - **Character consistency** — pass all existing character images so the model sees exactly what they look like, not just a text description
@@ -91,7 +104,7 @@ uv run skills/t2i/scripts/t2i.py "blue corgi and green cat having a picnic" \
   --output scene.png
 
 # Edit an existing image to match a reference style
-uv run skills/t2i/scripts/t2i.py "simplify, match this style" \
+uv run skills/t2i/scripts/t2i.py "simplify this image, matching the style of the reference" \
   --input-image draft.png \
   --reference target-style.png \
   --output refined.png
@@ -133,5 +146,5 @@ The script prints the exact export command needed if a key is missing.
 | `flux-2-pro` | ~$0.05/megapixel |
 | `flux-1.1-ultra` | ~$0.06/megapixel |
 
-OpenAI uses `quality: low` by default to keep iteration costs down.
+OpenAI defaults to `quality: auto` (the model picks). Override with `--quality low` for cheap iteration or `--quality high` for evals/finals. Medium/high cost is ~4x and ~16x the `low` price respectively.
 Fal.ai bills per megapixel (1024x1024 = 1MP = ~$0.05).

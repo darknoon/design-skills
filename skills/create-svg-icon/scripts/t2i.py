@@ -23,7 +23,7 @@ load_dotenv(find_dotenv(usecwd=True))
 sys.path.insert(0, str(Path(__file__).parent))
 from rasterize import render_svgs  # type: ignore  # noqa: E402
 
-OPENAI_MODELS = {"gpt-image-1", "gpt-image-1.5", "gpt-image-1-mini"}
+OPENAI_MODELS = {"gpt-image-1", "gpt-image-1.5", "gpt-image-1-mini", "gpt-image-2"}
 GEMINI_MODELS = {"gemini-2.5-flash-image", "gemini-3.1-flash-image-preview"}
 
 # Outer orchestrator model for OpenAI's Responses API (must be a text/chat model, not image)
@@ -80,30 +80,14 @@ def generate_openai(
     references: list[tuple[bytes, str]],
     input_image: tuple[bytes, str] | None = None,
     orchestrator: str = OPENAI_ORCHESTRATOR,
+    background: str = "auto",
+    quality: str = "auto",
 ) -> bytes:
     from openai import OpenAI
 
     client = OpenAI(api_key=require_key("OPENAI_API_KEY", "OpenAI"))
 
-    # Build instruction text
-    if input_image and references:
-        text = (
-            "I'm attaching an image to edit, plus style reference images. "
-            "Edit the image to match the style of the references with this description: "
-            + prompt
-        )
-    elif input_image:
-        text = "I'm attaching an image to edit. Edit it with this description: " + prompt
-    elif references:
-        text = (
-            "I'm attaching reference images that show the target visual style. "
-            "Generate a NEW image matching that style with this description: "
-            + prompt
-        )
-    else:
-        text = prompt
-
-    content: list[dict] = [{"type": "input_text", "text": text}]
+    content: list[dict] = [{"type": "input_text", "text": prompt}]
     if input_image:
         input_bytes, input_mime = input_image
         content.append({
@@ -116,19 +100,20 @@ def generate_openai(
             "image_url": f"data:{mime_type};base64,{base64.b64encode(ref_bytes).decode()}",
         })
 
+    tool_config: dict = {
+        "type": "image_generation",
+        "model": model,
+        "size": size,
+        "quality": quality,
+        "output_format": "png",
+    }
+    if background != "auto":
+        tool_config["background"] = background
+
     response = client.responses.create(
         model=orchestrator,
         input=[{"role": "user", "content": content}],
-        tools=[
-            {
-                "type": "image_generation",
-                "model": model,
-                "size": size,
-                "quality": "low",
-                "output_format": "png",
-                "background": "transparent",
-            }
-        ],
+        tools=[tool_config],
         tool_choice="required",
     )
     for output in response.output:
@@ -196,6 +181,7 @@ def main():
 models:
   gpt-image-1-mini        (default) fast, transparent background
   gpt-image-1             higher quality OpenAI
+  gpt-image-2             latest OpenAI
   gemini-2.5-flash-image  good for all icons, best at Android style
   gemini-3.1-flash-image-preview  needs explicit style description
 
@@ -241,6 +227,20 @@ api keys (env or .env file):
         default=[],
         help="Style reference images (PNG, JPG, WebP, SVG). SVGs are rendered via Playwright.",
     )
+    parser.add_argument(
+        "--background",
+        choices=["auto", "transparent", "opaque"],
+        default="auto",
+        help="OpenAI only: 'auto' (default, model picks), 'transparent', or 'opaque'. "
+        "Only gpt-image-1.x models support 'transparent'; gpt-image-2+ will error.",
+    )
+    parser.add_argument(
+        "--quality",
+        choices=["auto", "low", "medium", "high"],
+        default="auto",
+        help="OpenAI only: 'auto' (default), 'low', 'medium', 'high'. "
+        "Controls cost and fidelity — use 'low' for cheap iteration, 'high' for evals/finals.",
+    )
     args = parser.parse_args()
 
     out = Path(args.output) if args.output else Path("icon.png")
@@ -249,7 +249,9 @@ api keys (env or .env file):
 
     if args.model in OPENAI_MODELS:
         image_bytes = generate_openai(
-            args.prompt, args.model, args.size, references, input_image, args.orchestrator
+            args.prompt, args.model, args.size, references, input_image, args.orchestrator,
+            background=args.background,
+            quality=args.quality,
         )
     elif args.model in GEMINI_MODELS:
         image_bytes = generate_gemini(

@@ -21,7 +21,7 @@ from dotenv import find_dotenv, load_dotenv  # type: ignore
 
 load_dotenv(find_dotenv(usecwd=True))
 
-OPENAI_MODELS = {"gpt-image-1", "gpt-image-1.5", "gpt-image-1-mini"}
+OPENAI_MODELS = {"gpt-image-1", "gpt-image-1.5", "gpt-image-1-mini", "gpt-image-2"}
 GEMINI_MODELS = {"gemini-2.5-flash-image", "gemini-3.1-flash-image-preview"}
 FAL_MODELS = {
     "flux-2-flex": "fal-ai/flux-2-flex",
@@ -91,31 +91,14 @@ def generate_openai(
     partial: int = 0,
     output_dir: Path | None = None,
     output_name: str = "image.png",
+    background: str = "auto",
+    quality: str = "auto",
 ) -> bytes:
-    from openai import OpenAI
+    from openai import BadRequestError, OpenAI
 
     client = OpenAI(api_key=require_key("OPENAI_API_KEY", "OpenAI"))
 
-    # Build instruction text
-    if input_image and references:
-        text = (
-            "I'm attaching an image to edit, plus style reference images. "
-            "Edit the image to match the style of the references with this description: "
-            + prompt
-        )
-    elif input_image:
-        text = (
-            "I'm attaching an image to edit. Edit it with this description: " + prompt
-        )
-    elif references:
-        text = (
-            "I'm attaching reference images that show the target visual style. "
-            "Generate a NEW image matching that style with this description: " + prompt
-        )
-    else:
-        text = prompt
-
-    content: list[dict] = [{"type": "input_text", "text": text}]
+    content: list[dict] = [{"type": "input_text", "text": prompt}]
     if input_image:
         input_bytes, input_mime = input_image
         content.append(
@@ -136,23 +119,38 @@ def generate_openai(
         "type": "image_generation",
         "model": model,
         "size": size,
-        "quality": "low",
+        "quality": quality,
         "output_format": "png",
-        "background": "transparent",
     }
+    if background != "auto":
+        tool_config["background"] = background
     if partial > 0:
         tool_config["partial_images"] = min(partial, 3)
+
+    def _handle_bad_request(e: BadRequestError) -> None:
+        msg = str(e)
+        if "background" in msg.lower() or "transparent" in msg.lower():
+            print(
+                f"\n  Model '{model}' does not support background='{background}'.\n"
+                "  Pass --background opaque for newer models (e.g. gpt-image-2).\n"
+            )
+        print(f"OpenAI API error: {e}")
+        sys.exit(1)
 
     if partial > 0:
         # Streaming mode — write partial images to the output path as they arrive,
         # so the agent/user can see progress by watching the file
-        stream = client.responses.create(
-            model=orchestrator,
-            input=[{"role": "user", "content": content}],
-            tools=[tool_config],
-            tool_choice="required",
-            stream=True,
-        )
+        try:
+            stream = client.responses.create(
+                model=orchestrator,
+                input=[{"role": "user", "content": content}],
+                tools=[tool_config],
+                tool_choice="required",
+                stream=True,
+            )
+        except BadRequestError as e:
+            _handle_bad_request(e)
+            return b""  # unreachable
         final_bytes: bytes | None = None
         partial_count = 0
         partial_total = min(partial, 3)
@@ -177,12 +175,16 @@ def generate_openai(
         sys.exit(1)
     else:
         # Non-streaming mode
-        response = client.responses.create(
-            model=orchestrator,
-            input=[{"role": "user", "content": content}],
-            tools=[tool_config],
-            tool_choice="required",
-        )
+        try:
+            response = client.responses.create(
+                model=orchestrator,
+                input=[{"role": "user", "content": content}],
+                tools=[tool_config],
+                tool_choice="required",
+            )
+        except BadRequestError as e:
+            _handle_bad_request(e)
+            return b""  # unreachable
         for output in response.output:
             if output.type == "image_generation_call":
                 return base64.b64decode(output.result)
@@ -310,7 +312,8 @@ def main():
 models:
   gpt-image-1-mini        (default) fast, transparent background
   gpt-image-1             higher quality OpenAI
-  gpt-image-1.5           latest OpenAI
+  gpt-image-1.5           OpenAI 1.5
+  gpt-image-2             latest OpenAI
   gemini-2.5-flash-image  good all-around, great for Android style
   gemini-3.1-flash-image-preview  needs explicit style description
   flux-2-flex             FLUX.2 Flex via fal.ai — fast, high quality
@@ -366,6 +369,20 @@ api keys (env or .env file):
         help="Style reference images (PNG, JPG, WebP).",
     )
     parser.add_argument(
+        "--background",
+        choices=["auto", "transparent", "opaque"],
+        default="auto",
+        help="OpenAI only: 'auto' (default, model picks), 'transparent', or 'opaque'. "
+        "Only gpt-image-1* models support 'transparent'; gpt-image-2* will error.",
+    )
+    parser.add_argument(
+        "--quality",
+        choices=["auto", "low", "medium", "high"],
+        default="auto",
+        help="OpenAI only: 'auto' (default), 'low', 'medium', 'high'. "
+        "Controls cost and fidelity — use 'low' for cheap iteration, 'high' for evals/finals.",
+    )
+    parser.add_argument(
         "--partial",
         type=int,
         default=0,
@@ -391,6 +408,8 @@ api keys (env or .env file):
             partial=args.partial,
             output_dir=out.parent,
             output_name=out.name,
+            background=args.background,
+            quality=args.quality,
         )
     elif args.model in GEMINI_MODELS:
         if args.partial > 0:
